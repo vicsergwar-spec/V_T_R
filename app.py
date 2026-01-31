@@ -1,0 +1,397 @@
+"""
+V_T_R - Video Transcriptor y Resumen
+Servidor Flask Principal
+"""
+import os
+import logging
+from pathlib import Path
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
+from werkzeug.utils import secure_filename
+
+import config
+from services import AudioExtractor, Transcriber, GeminiService, FileManager
+
+# Configurar logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Inicializar Flask
+app = Flask(__name__, static_folder='static')
+app.config['MAX_CONTENT_LENGTH'] = config.MAX_CONTENT_LENGTH
+CORS(app)
+
+# Inicializar servicios
+file_manager = FileManager(
+    base_dir=str(config.BASE_DIR),
+    clases_dir=str(config.CLASES_DIR),
+    temp_dir=str(config.TEMP_DIR)
+)
+
+audio_extractor = AudioExtractor(sample_rate=config.AUDIO_SAMPLE_RATE)
+
+# Transcriber se inicializa lazy (cuando se necesita)
+transcriber = None
+
+# GeminiService se inicializa si hay API key
+gemini_service = None
+if config.GEMINI_API_KEY:
+    try:
+        gemini_service = GeminiService(
+            api_key=config.GEMINI_API_KEY,
+            model_name=config.GEMINI_MODEL
+        )
+    except Exception as e:
+        logger.error(f"Error inicializando Gemini: {e}")
+
+
+def get_transcriber(model_name: str = None) -> Transcriber:
+    """Obtiene o crea una instancia del transcriber"""
+    global transcriber
+    model = model_name or config.DEFAULT_WHISPER_MODEL
+
+    if transcriber is None or transcriber.model_name != model:
+        transcriber = Transcriber(
+            model_name=model,
+            openai_api_key=config.OPENAI_API_KEY
+        )
+
+    return transcriber
+
+
+# ============== RUTAS DE LA API ==============
+
+@app.route('/')
+def index():
+    """Sirve la página principal"""
+    return send_from_directory('static', 'index.html')
+
+
+@app.route('/static/<path:filename>')
+def serve_static(filename):
+    """Sirve archivos estáticos"""
+    return send_from_directory('static', filename)
+
+
+@app.route('/api/status', methods=['GET'])
+def get_status():
+    """Obtiene el estado del sistema"""
+    import torch
+
+    gpu_available = torch.cuda.is_available()
+    gpu_info = None
+
+    if gpu_available:
+        gpu_info = {
+            "name": torch.cuda.get_device_name(0),
+            "memory_total_gb": round(torch.cuda.get_device_properties(0).total_memory / (1024**3), 2)
+        }
+
+    return jsonify({
+        "status": "ok",
+        "gemini_configured": gemini_service is not None,
+        "openai_configured": config.OPENAI_API_KEY is not None,
+        "gpu_available": gpu_available,
+        "gpu_info": gpu_info,
+        "whisper_models": list(config.WHISPER_MODELS.keys()),
+        "default_model": config.DEFAULT_WHISPER_MODEL
+    })
+
+
+@app.route('/api/classes', methods=['GET'])
+def get_classes():
+    """Obtiene lista de todas las clases"""
+    classes = file_manager.get_all_classes()
+    return jsonify({"classes": classes})
+
+
+@app.route('/api/classes/<class_id>', methods=['GET'])
+def get_class(class_id):
+    """Obtiene información de una clase específica"""
+    class_info = file_manager.get_class_by_id(class_id)
+
+    if not class_info:
+        return jsonify({"error": "Clase no encontrada"}), 404
+
+    # Agregar resumen si existe
+    summary = file_manager.get_summary(class_id)
+    if summary:
+        class_info["summary"] = summary
+
+    return jsonify(class_info)
+
+
+@app.route('/api/classes/<class_id>/transcription', methods=['GET'])
+def get_transcription(class_id):
+    """Obtiene la transcripción de una clase"""
+    segments = file_manager.get_transcription(class_id)
+
+    if segments is None:
+        return jsonify({"error": "Transcripción no encontrada"}), 404
+
+    return jsonify({
+        "class_id": class_id,
+        "segments": segments,
+        "total_segments": len(segments)
+    })
+
+
+@app.route('/api/classes/<class_id>/summary', methods=['GET'])
+def get_summary(class_id):
+    """Obtiene el resumen de una clase"""
+    summary = file_manager.get_summary(class_id)
+
+    if summary is None:
+        return jsonify({"error": "Resumen no encontrado"}), 404
+
+    return jsonify({
+        "class_id": class_id,
+        "summary": summary
+    })
+
+
+@app.route('/api/classes/<class_id>', methods=['DELETE'])
+def delete_class(class_id):
+    """Elimina una clase"""
+    success = file_manager.delete_class(class_id)
+
+    if not success:
+        return jsonify({"error": "No se pudo eliminar la clase"}), 404
+
+    return jsonify({"message": "Clase eliminada exitosamente"})
+
+
+@app.route('/api/process', methods=['POST'])
+def process_video():
+    """
+    Procesa un video: extrae audio, transcribe, genera nombre y resumen
+    """
+    # Verificar que hay archivo
+    if 'video' not in request.files:
+        return jsonify({"error": "No se proporcionó archivo de video"}), 400
+
+    video_file = request.files['video']
+
+    if video_file.filename == '':
+        return jsonify({"error": "Nombre de archivo vacío"}), 400
+
+    # Verificar extensión
+    filename = secure_filename(video_file.filename)
+    ext = Path(filename).suffix.lower()
+
+    if ext not in config.SUPPORTED_VIDEO_FORMATS:
+        return jsonify({
+            "error": f"Formato no soportado: {ext}",
+            "supported": config.SUPPORTED_VIDEO_FORMATS
+        }), 400
+
+    # Verificar Gemini
+    if not gemini_service:
+        return jsonify({"error": "Gemini API no está configurado"}), 500
+
+    # Obtener modelo de Whisper
+    whisper_model = request.form.get('model', config.DEFAULT_WHISPER_MODEL)
+    if whisper_model not in config.WHISPER_MODELS:
+        whisper_model = config.DEFAULT_WHISPER_MODEL
+
+    video_path = None
+    audio_path = None
+
+    try:
+        # 1. Guardar video temporal
+        logger.info(f"Procesando video: {filename}")
+        video_path = file_manager.save_video_to_temp(video_file, filename)
+
+        # 2. Extraer audio
+        logger.info("Extrayendo audio...")
+        audio_path = audio_extractor.extract_audio(video_path)
+
+        # 3. Transcribir
+        logger.info(f"Transcribiendo con modelo {whisper_model}...")
+        trans = get_transcriber(whisper_model)
+        result = trans.transcribe(audio_path)
+
+        # 4. Generar nombre de carpeta
+        logger.info("Generando nombre de carpeta...")
+        folder_name = gemini_service.generate_folder_name(result["text"])
+
+        # 5. Crear carpeta y guardar transcripción
+        class_folder = file_manager.create_class_folder(folder_name)
+        file_manager.save_transcription(result["segments"], class_folder)
+
+        # 6. Generar y guardar resumen
+        logger.info("Generando resumen...")
+        summary = gemini_service.generate_summary(result["text"], folder_name)
+        file_manager.save_summary(summary, class_folder)
+
+        # 7. Limpiar archivos temporales
+        logger.info("Limpiando archivos temporales...")
+        file_manager.cleanup_temp_files(video_path, audio_path)
+
+        # 8. Obtener información de la clase creada
+        class_info = file_manager.get_class_by_id(class_folder.name)
+        class_info["summary"] = summary
+
+        logger.info(f"Procesamiento completado: {class_folder.name}")
+
+        return jsonify({
+            "success": True,
+            "message": "Video procesado exitosamente",
+            "class": class_info
+        })
+
+    except Exception as e:
+        logger.error(f"Error procesando video: {e}")
+
+        # Limpiar archivos temporales en caso de error
+        if video_path:
+            file_manager.cleanup_temp_files(video_path, audio_path)
+
+        return jsonify({
+            "error": str(e),
+            "message": "Error al procesar el video"
+        }), 500
+
+
+# ============== RUTAS DE CHAT ==============
+
+@app.route('/api/chat/<class_id>/start', methods=['POST'])
+def start_chat(class_id):
+    """Inicia una sesión de chat para una clase"""
+    if not gemini_service:
+        return jsonify({"error": "Gemini API no está configurado"}), 500
+
+    # Obtener transcripción
+    transcription_text = file_manager.get_transcription_text(class_id)
+
+    if not transcription_text:
+        return jsonify({"error": "No se encontró la transcripción"}), 404
+
+    # Iniciar sesión de chat
+    gemini_service.start_chat_session(class_id, transcription_text)
+
+    return jsonify({
+        "success": True,
+        "message": "Sesión de chat iniciada",
+        "class_id": class_id
+    })
+
+
+@app.route('/api/chat/<class_id>/message', methods=['POST'])
+def send_chat_message(class_id):
+    """Envía un mensaje en el chat de una clase"""
+    if not gemini_service:
+        return jsonify({"error": "Gemini API no está configurado"}), 500
+
+    data = request.get_json()
+
+    if not data or 'message' not in data:
+        return jsonify({"error": "Se requiere un mensaje"}), 400
+
+    user_message = data['message'].strip()
+
+    if not user_message:
+        return jsonify({"error": "El mensaje no puede estar vacío"}), 400
+
+    try:
+        # Si no hay sesión activa, iniciar una
+        if class_id not in gemini_service.chat_sessions:
+            transcription_text = file_manager.get_transcription_text(class_id)
+            if not transcription_text:
+                return jsonify({"error": "No se encontró la transcripción"}), 404
+            gemini_service.start_chat_session(class_id, transcription_text)
+
+        # Enviar mensaje
+        response = gemini_service.chat(class_id, user_message)
+
+        return jsonify({
+            "success": True,
+            "response": response,
+            "class_id": class_id
+        })
+
+    except Exception as e:
+        logger.error(f"Error en chat: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/chat/<class_id>/history', methods=['GET'])
+def get_chat_history(class_id):
+    """Obtiene el historial de chat de una clase"""
+    if not gemini_service:
+        return jsonify({"error": "Gemini API no está configurado"}), 500
+
+    history = gemini_service.get_chat_history(class_id)
+
+    return jsonify({
+        "class_id": class_id,
+        "history": history
+    })
+
+
+@app.route('/api/chat/<class_id>/clear', methods=['POST'])
+def clear_chat(class_id):
+    """Limpia el historial de chat de una clase"""
+    if not gemini_service:
+        return jsonify({"error": "Gemini API no está configurado"}), 500
+
+    success = gemini_service.clear_chat_history(class_id)
+
+    return jsonify({
+        "success": success,
+        "message": "Historial de chat limpiado" if success else "No había sesión activa"
+    })
+
+
+# ============== MANEJO DE ERRORES ==============
+
+@app.errorhandler(413)
+def request_entity_too_large(error):
+    """Maneja errores de archivo muy grande"""
+    max_mb = config.MAX_CONTENT_LENGTH / (1024 * 1024)
+    return jsonify({
+        "error": f"El archivo es demasiado grande. Máximo permitido: {max_mb:.0f} MB"
+    }), 413
+
+
+@app.errorhandler(500)
+def internal_server_error(error):
+    """Maneja errores internos del servidor"""
+    return jsonify({
+        "error": "Error interno del servidor",
+        "message": str(error)
+    }), 500
+
+
+# ============== PUNTO DE ENTRADA ==============
+
+if __name__ == '__main__':
+    logger.info("=" * 50)
+    logger.info("V_T_R - Video Transcriptor y Resumen")
+    logger.info("=" * 50)
+
+    # Verificar configuración
+    if not config.GEMINI_API_KEY:
+        logger.warning("⚠️  GEMINI_API_KEY no configurada. Algunas funciones no estarán disponibles.")
+
+    if not config.OPENAI_API_KEY:
+        logger.info("ℹ️  OPENAI_API_KEY no configurada. El respaldo de Whisper API no estará disponible.")
+
+    import torch
+    if torch.cuda.is_available():
+        gpu_name = torch.cuda.get_device_name(0)
+        logger.info(f"✅ GPU detectada: {gpu_name}")
+    else:
+        logger.warning("⚠️  CUDA no disponible. Whisper usará CPU (más lento).")
+
+    logger.info(f"🌐 Servidor iniciando en http://{config.FLASK_HOST}:{config.FLASK_PORT}")
+    logger.info("=" * 50)
+
+    app.run(
+        host=config.FLASK_HOST,
+        port=config.FLASK_PORT,
+        debug=config.FLASK_DEBUG
+    )

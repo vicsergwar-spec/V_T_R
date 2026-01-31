@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>V_T_R - Video Transcriptor y Resumen</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar de navegación -->
+        <nav class="sidebar">
+            <div class="logo">
+                <h1>V_T_R</h1>
+                <span class="subtitle">Video Transcriptor</span>
+            </div>
+            <ul class="nav-menu">
+                <li class="nav-item active" data-section="upload">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="17 8 12 3 7 8"/>
+                        <line x1="12" y1="3" x2="12" y2="15"/>
+                    </svg>
+                    <span>Subir Video</span>
+                </li>
+                <li class="nav-item" data-section="classes">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                    </svg>
+                    <span>Mis Clases</span>
+                </li>
+            </ul>
+            <div class="system-status" id="systemStatus">
+                <div class="status-item">
+                    <span class="status-dot" id="gpuStatus"></span>
+                    <span id="gpuText">Verificando GPU...</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-dot" id="geminiStatus"></span>
+                    <span id="geminiText">Verificando Gemini...</span>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Contenido principal -->
+        <main class="main-content">
+            <!-- Sección: Subir Video -->
+            <section class="section active" id="upload-section">
+                <div class="section-header">
+                    <h2>Procesar Video de Clase</h2>
+                    <p>Sube un video y obtén la transcripción y resumen automáticamente</p>
+                </div>
+
+                <div class="upload-container">
+                    <div class="upload-area" id="uploadArea">
+                        <div class="upload-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M7 18a4.6 4.4 0 0 1 0-9 5 4.5 0 0 1 11 2h1a3.5 3.5 0 0 1 0 7h-1"/>
+                                <polyline points="14 11 17 8 20 11"/>
+                                <line x1="17" y1="8" x2="17" y2="16"/>
+                            </svg>
+                        </div>
+                        <p class="upload-text">Arrastra tu video aquí o haz clic para seleccionar</p>
+                        <p class="upload-hint">Formatos soportados: MP4, MKV, AVI, MOV, WEBM</p>
+                        <input type="file" id="fileInput" accept="video/*" hidden>
+                    </div>
+
+                    <div class="file-selected" id="fileSelected" style="display: none;">
+                        <div class="file-info">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polygon points="23 7 16 12 23 17 23 7"/>
+                                <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+                            </svg>
+                            <div class="file-details">
+                                <span class="file-name" id="fileName"></span>
+                                <span class="file-size" id="fileSize"></span>
+                            </div>
+                        </div>
+                        <button class="btn-remove" id="removeFile" title="Quitar archivo">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"/>
+                                <line x1="6" y1="6" x2="18" y2="18"/>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <div class="options-row">
+                        <div class="option-group">
+                            <label for="modelSelect">Modelo Whisper:</label>
+                            <select id="modelSelect">
+                                <option value="small" selected>Small (Recomendado - 6GB VRAM)</option>
+                                <option value="medium">Medium (Requiere más VRAM)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <button class="btn-primary btn-process" id="processBtn" disabled>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="5 3 19 12 5 21 5 3"/>
+                        </svg>
+                        <span>Procesar Video</span>
+                    </button>
+
+                    <!-- Barra de progreso -->
+                    <div class="progress-container" id="progressContainer" style="display: none;">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progressFill"></div>
+                        </div>
+                        <div class="progress-status">
+                            <span id="progressText">Preparando...</span>
+                            <span id="progressPercent">0%</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Sección: Mis Clases -->
+            <section class="section" id="classes-section">
+                <div class="section-header">
+                    <h2>Mis Clases</h2>
+                    <p>Todas tus clases procesadas</p>
+                </div>
+
+                <div class="classes-grid" id="classesGrid">
+                    <!-- Las tarjetas de clases se cargan dinámicamente -->
+                </div>
+
+                <div class="empty-state" id="emptyClasses" style="display: none;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                    </svg>
+                    <h3>No hay clases procesadas</h3>
+                    <p>Sube tu primer video para comenzar</p>
+                </div>
+            </section>
+
+            <!-- Sección: Detalle de Clase -->
+            <section class="section" id="detail-section">
+                <div class="section-header detail-header">
+                    <button class="btn-back" id="backBtn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="19" y1="12" x2="5" y2="12"/>
+                            <polyline points="12 19 5 12 12 5"/>
+                        </svg>
+                        <span>Volver</span>
+                    </button>
+                    <h2 id="detailTitle">Nombre de la Clase</h2>
+                    <span class="detail-date" id="detailDate"></span>
+                </div>
+
+                <div class="detail-content">
+                    <!-- Tabs -->
+                    <div class="tabs">
+                        <button class="tab active" data-tab="summary">Resumen</button>
+                        <button class="tab" data-tab="transcription">Transcripción</button>
+                        <button class="tab" data-tab="chat">Chat</button>
+                    </div>
+
+                    <!-- Tab: Resumen -->
+                    <div class="tab-content active" id="tab-summary">
+                        <div class="summary-content markdown-body" id="summaryContent">
+                            <!-- Resumen en markdown renderizado -->
+                        </div>
+                    </div>
+
+                    <!-- Tab: Transcripción -->
+                    <div class="tab-content" id="tab-transcription">
+                        <div class="transcription-content" id="transcriptionContent">
+                            <!-- Segmentos de transcripción -->
+                        </div>
+                    </div>
+
+                    <!-- Tab: Chat -->
+                    <div class="tab-content" id="tab-chat">
+                        <div class="chat-container">
+                            <div class="chat-messages" id="chatMessages">
+                                <div class="chat-welcome">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                                    </svg>
+                                    <h3>Chat con la Clase</h3>
+                                    <p>Haz preguntas sobre el contenido de esta clase y obtendras respuestas basadas en la transcripcion.</p>
+                                </div>
+                            </div>
+                            <div class="chat-input-container">
+                                <button class="btn-clear-chat" id="clearChatBtn" title="Limpiar historial de chat">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="3 6 5 6 21 6"/>
+                                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                                    </svg>
+                                    <span>Limpiar Chat</span>
+                                </button>
+                                <div class="chat-input-wrapper">
+                                    <textarea id="chatInput" placeholder="Escribe tu pregunta sobre la clase..." rows="1"></textarea>
+                                    <button class="btn-send" id="sendChatBtn">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <line x1="22" y1="2" x2="11" y2="13"/>
+                                            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Modal de notificaciones -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Modal de confirmación -->
+    <div class="modal" id="confirmModal">
+        <div class="modal-content">
+            <h3 id="modalTitle">Confirmar accion</h3>
+            <p id="modalMessage">¿Estas seguro?</p>
+            <div class="modal-actions">
+                <button class="btn-secondary" id="modalCancel">Cancelar</button>
+                <button class="btn-danger" id="modalConfirm">Confirmar</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

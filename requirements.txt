@@ -1,0 +1,29 @@
+# V_T_R - Video Transcriptor y Resumen
+# Dependencias de Python
+
+# Framework web
+flask>=3.0.0
+flask-cors>=4.0.0
+
+# Google Gemini API
+google-generativeai>=0.5.0
+
+# OpenAI (opcional, para Whisper API como respaldo)
+openai>=1.12.0
+
+# Whisper para transcripción local
+# Nota: Instalar con pip install openai-whisper
+openai-whisper>=20231117
+
+# PyTorch con CUDA - Instalar manualmente con:
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# torch
+
+# Procesamiento de audio
+pydub>=0.25.1
+
+# Variables de entorno
+python-dotenv>=1.0.0
+
+# Utilidades
+werkzeug>=3.0.0
