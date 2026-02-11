@@ -157,9 +157,9 @@ async function checkSystemStatus() {
     } catch (error) {
         console.error('Error checking status:', error);
         elements.gpuStatus.className = 'status-dot error';
-        elements.gpuText.textContent = 'Error de conexion';
+        elements.gpuText.textContent = 'Error de conexión';
         elements.geminiStatus.className = 'status-dot error';
-        elements.geminiText.textContent = 'Error de conexion';
+        elements.geminiText.textContent = 'Error de conexión';
     }
 }
 
@@ -195,7 +195,7 @@ function initUpload() {
         if (file && file.type.startsWith('video/')) {
             handleFileSelect(file);
         } else {
-            showToast('error', 'Archivo invalido', 'Por favor selecciona un archivo de video');
+            showToast('error', 'Archivo inválido', 'Por favor selecciona un archivo de video');
         }
     });
 
@@ -485,12 +485,12 @@ async function loadTranscription(classId) {
                 </div>
             `).join('');
         } else {
-            elements.transcriptionContent.innerHTML = '<p class="text-muted">No hay transcripcion disponible</p>';
+            elements.transcriptionContent.innerHTML = '<p class="text-muted">No hay transcripción disponible</p>';
         }
 
     } catch (error) {
         console.error('Error loading transcription:', error);
-        elements.transcriptionContent.innerHTML = '<p class="text-muted">Error al cargar la transcripcion</p>';
+        elements.transcriptionContent.innerHTML = '<p class="text-muted">Error al cargar la transcripción</p>';
     }
 }
 
@@ -616,7 +616,7 @@ async function clearChat() {
     try {
         await fetch(`/api/chat/${state.currentClass.id}/clear`, { method: 'POST' });
         resetChat();
-        showToast('success', 'Chat limpiado', 'El historial de conversacion ha sido borrado');
+        showToast('success', 'Chat limpiado', 'El historial de conversación ha sido borrado');
     } catch (error) {
         console.error('Error clearing chat:', error);
         showToast('error', 'Error', 'No se pudo limpiar el chat');
@@ -630,7 +630,7 @@ function resetChat() {
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
             </svg>
             <h3>Chat con la Clase</h3>
-            <p>Haz preguntas sobre el contenido de esta clase y obtendras respuestas basadas en la transcripcion.</p>
+            <p>Haz preguntas sobre el contenido de esta clase y obtendrás respuestas basadas en la transcripción.</p>
         </div>
     `;
     elements.chatInput.value = '';
@@ -676,7 +676,7 @@ function confirmDeleteClass(classId) {
     const cls = state.classes.find(c => c.id === classId);
     showConfirmModal(
         'Eliminar clase',
-        `¿Estas seguro de que deseas eliminar "${cls?.name || classId}"? Esta accion no se puede deshacer.`,
+        `¿Estás seguro de que deseas eliminar "${cls?.name || classId}"? Esta acción no se puede deshacer.`,
         () => deleteClass(classId)
     );
 }
@@ -765,35 +765,84 @@ function escapeHtml(text) {
 }
 
 function parseMarkdown(text) {
-    // Convertir markdown básico a HTML
-    let html = text
+    if (!text) return '';
+
+    // Procesar línea por línea para mejor manejo de listas
+    const lines = text.split('\n');
+    let html = '';
+    let inList = false;
+    let inParagraph = false;
+
+    for (let i = 0; i < lines.length; i++) {
+        let line = lines[i];
+
         // Headers
-        .replace(/^### (.*$)/gim, '<h3>$1</h3>')
-        .replace(/^## (.*$)/gim, '<h2>$1</h2>')
-        .replace(/^# (.*$)/gim, '<h1>$1</h1>')
-        // Bold
-        .replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>')
-        // Italic
-        .replace(/\*(.*?)\*/gim, '<em>$1</em>')
-        // Code inline
-        .replace(/`(.*?)`/gim, '<code>$1</code>')
-        // Unordered lists
-        .replace(/^\s*[-*]\s+(.*$)/gim, '<li>$1</li>')
-        // Ordered lists
-        .replace(/^\s*\d+\.\s+(.*$)/gim, '<li>$1</li>')
-        // Paragraphs
-        .replace(/\n\n/gim, '</p><p>')
-        // Line breaks
-        .replace(/\n/gim, '<br>');
+        if (line.match(/^### /)) {
+            if (inList) { html += '</ul>'; inList = false; }
+            if (inParagraph) { html += '</p>'; inParagraph = false; }
+            html += '<h3>' + processInline(line.substring(4)) + '</h3>';
+            continue;
+        }
+        if (line.match(/^## /)) {
+            if (inList) { html += '</ul>'; inList = false; }
+            if (inParagraph) { html += '</p>'; inParagraph = false; }
+            html += '<h2>' + processInline(line.substring(3)) + '</h2>';
+            continue;
+        }
+        if (line.match(/^# /)) {
+            if (inList) { html += '</ul>'; inList = false; }
+            if (inParagraph) { html += '</p>'; inParagraph = false; }
+            html += '<h1>' + processInline(line.substring(2)) + '</h1>';
+            continue;
+        }
 
-    // Wrap consecutive list items
-    html = html.replace(/(<li>.*<\/li>)/gim, '<ul>$1</ul>');
-    html = html.replace(/<\/ul>\s*<ul>/gim, '');
+        // Listas no ordenadas
+        const ulMatch = line.match(/^\s*[-*]\s+(.*)/);
+        if (ulMatch) {
+            if (inParagraph) { html += '</p>'; inParagraph = false; }
+            if (!inList) { html += '<ul>'; inList = true; }
+            html += '<li>' + processInline(ulMatch[1]) + '</li>';
+            continue;
+        }
 
-    // Wrap in paragraph if not starting with a tag
-    if (!html.startsWith('<')) {
-        html = '<p>' + html + '</p>';
+        // Listas ordenadas
+        const olMatch = line.match(/^\s*\d+\.\s+(.*)/);
+        if (olMatch) {
+            if (inParagraph) { html += '</p>'; inParagraph = false; }
+            if (!inList) { html += '<ul>'; inList = true; }
+            html += '<li>' + processInline(olMatch[1]) + '</li>';
+            continue;
+        }
+
+        // Cerrar lista si ya no estamos en una
+        if (inList) { html += '</ul>'; inList = false; }
+
+        // Línea vacía = separador de párrafo
+        if (line.trim() === '') {
+            if (inParagraph) { html += '</p>'; inParagraph = false; }
+            continue;
+        }
+
+        // Texto normal
+        if (!inParagraph) {
+            html += '<p>';
+            inParagraph = true;
+        } else {
+            html += '<br>';
+        }
+        html += processInline(line);
     }
 
+    // Cerrar etiquetas abiertas
+    if (inList) html += '</ul>';
+    if (inParagraph) html += '</p>';
+
     return html;
+}
+
+function processInline(text) {
+    return text
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.*?)\*/g, '<em>$1</em>')
+        .replace(/`(.*?)`/g, '<code>$1</code>');
 }

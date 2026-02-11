@@ -9,6 +9,9 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Bandera para ocultar ventana de consola en Windows (no existe en Linux/macOS)
+_SUBPROCESS_FLAGS = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+
 
 class AudioExtractor:
     """Extrae audio de archivos de video usando FFmpeg"""
@@ -30,7 +33,7 @@ class AudioExtractor:
                 ["ffmpeg", "-version"],
                 capture_output=True,
                 text=True,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                creationflags=_SUBPROCESS_FLAGS
             )
             if result.returncode == 0:
                 logger.info("FFmpeg encontrado y funcionando")
@@ -90,7 +93,8 @@ class AudioExtractor:
                 cmd,
                 capture_output=True,
                 text=True,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                timeout=7200,  # 2 horas máximo para videos largos
+                creationflags=_SUBPROCESS_FLAGS
             )
 
             if result.returncode != 0:
@@ -107,7 +111,7 @@ class AudioExtractor:
             return str(output_path)
 
         except subprocess.TimeoutExpired:
-            raise RuntimeError("Tiempo de espera agotado al extraer audio")
+            raise RuntimeError("Tiempo de espera agotado al extraer audio (límite: 2 horas)")
 
     def get_video_duration(self, video_path: str) -> float:
         """
@@ -132,7 +136,7 @@ class AudioExtractor:
                 cmd,
                 capture_output=True,
                 text=True,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                creationflags=_SUBPROCESS_FLAGS
             )
 
             if result.returncode == 0:

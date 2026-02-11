@@ -4,11 +4,17 @@ Servicio de transcripción usando Whisper (local con CUDA) y OpenAI API como res
 import json
 import logging
 from pathlib import Path
-from typing import Optional, Generator
-import torch
+from typing import Optional
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    logger.warning("PyTorch no está instalado. La transcripción local no estará disponible.")
 
 
 class Transcriber:
@@ -29,6 +35,10 @@ class Transcriber:
 
     def _get_device(self) -> str:
         """Determina el dispositivo a usar (CUDA o CPU)"""
+        if not TORCH_AVAILABLE:
+            logger.warning("PyTorch no disponible. Se usará API de OpenAI como respaldo.")
+            return "cpu"
+
         if torch.cuda.is_available():
             gpu_name = torch.cuda.get_device_name(0)
             gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
@@ -42,6 +52,12 @@ class Transcriber:
         """Carga el modelo Whisper en memoria"""
         if self.model is not None:
             return
+
+        if not TORCH_AVAILABLE:
+            raise RuntimeError(
+                "PyTorch no está instalado. Instálalo con: "
+                "pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121"
+            )
 
         logger.info(f"Cargando modelo Whisper '{self.model_name}' en {self.device}...")
 
@@ -89,13 +105,17 @@ class Transcriber:
             )
 
             # Procesar segmentos
+            raw_segments = result.get("segments", [])
             segments = []
-            for segment in result.get("segments", []):
+            for segment in raw_segments:
+                # avg_logprob va de ~-1 (baja confianza) a 0 (alta confianza)
+                # Normalizamos a rango 0.0 - 1.0
+                confianza = max(0.0, min(1.0, round(segment.get("avg_logprob", 0) + 1, 2)))
                 segments.append({
                     "timestamp_inicio": self._format_timestamp(segment["start"]),
                     "timestamp_fin": self._format_timestamp(segment["end"]),
                     "texto": segment["text"].strip(),
-                    "confianza": round(segment.get("avg_logprob", 0) + 1, 2)  # Normalizar
+                    "confianza": confianza
                 })
 
             logger.info(f"Transcripción completada: {len(segments)} segmentos")
@@ -104,7 +124,7 @@ class Transcriber:
                 "text": result["text"],
                 "segments": segments,
                 "language": result.get("language", language),
-                "duration": result["segments"][-1]["end"] if result["segments"] else 0
+                "duration": raw_segments[-1]["end"] if raw_segments else 0.0
             }
 
         except Exception as e:
@@ -148,20 +168,22 @@ class Transcriber:
                 )
 
             # Procesar respuesta
+            raw_segments = response.segments or []
             segments = []
-            for segment in response.segments or []:
+            for segment in raw_segments:
+                confianza = max(0.0, min(1.0, round(getattr(segment, "avg_logprob", 0) + 1, 2)))
                 segments.append({
                     "timestamp_inicio": self._format_timestamp(segment.start),
                     "timestamp_fin": self._format_timestamp(segment.end),
                     "texto": segment.text.strip(),
-                    "confianza": round(getattr(segment, "avg_logprob", 0) + 1, 2)
+                    "confianza": confianza
                 })
 
             return {
                 "text": response.text,
                 "segments": segments,
                 "language": "es",
-                "duration": segments[-1]["timestamp_fin"] if segments else "00:00:00.000"
+                "duration": raw_segments[-1].end if raw_segments else 0.0
             }
 
         except Exception as e:
@@ -258,7 +280,7 @@ class Transcriber:
 
     def get_gpu_info(self) -> dict:
         """Obtiene información sobre la GPU disponible"""
-        if torch.cuda.is_available():
+        if TORCH_AVAILABLE and torch.cuda.is_available():
             return {
                 "available": True,
                 "device": self.device,
@@ -274,6 +296,6 @@ class Transcriber:
         if self.model is not None:
             del self.model
             self.model = None
-            if torch.cuda.is_available():
+            if TORCH_AVAILABLE and torch.cuda.is_available():
                 torch.cuda.empty_cache()
             logger.info("Modelo Whisper descargado de memoria")
