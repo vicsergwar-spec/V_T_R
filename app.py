@@ -79,16 +79,19 @@ def serve_static(filename):
 @app.route('/api/status', methods=['GET'])
 def get_status():
     """Obtiene el estado del sistema"""
-    import torch
-
-    gpu_available = torch.cuda.is_available()
+    gpu_available = False
     gpu_info = None
 
-    if gpu_available:
-        gpu_info = {
-            "name": torch.cuda.get_device_name(0),
-            "memory_total_gb": round(torch.cuda.get_device_properties(0).total_memory / (1024**3), 2)
-        }
+    try:
+        import torch
+        gpu_available = torch.cuda.is_available()
+        if gpu_available:
+            gpu_info = {
+                "name": torch.cuda.get_device_name(0),
+                "memory_total_gb": round(torch.cuda.get_device_properties(0).total_memory / (1024**3), 2)
+            }
+    except ImportError:
+        logger.warning("PyTorch no está instalado. No se puede verificar GPU.")
 
     return jsonify({
         "status": "ok",
@@ -375,19 +378,22 @@ if __name__ == '__main__':
 
     # Verificar configuración
     if not config.GEMINI_API_KEY:
-        logger.warning("⚠️  GEMINI_API_KEY no configurada. Algunas funciones no estarán disponibles.")
+        logger.warning("GEMINI_API_KEY no configurada. Algunas funciones no estarán disponibles.")
 
     if not config.OPENAI_API_KEY:
-        logger.info("ℹ️  OPENAI_API_KEY no configurada. El respaldo de Whisper API no estará disponible.")
+        logger.info("OPENAI_API_KEY no configurada. El respaldo de Whisper API no estará disponible.")
 
-    import torch
-    if torch.cuda.is_available():
-        gpu_name = torch.cuda.get_device_name(0)
-        logger.info(f"✅ GPU detectada: {gpu_name}")
-    else:
-        logger.warning("⚠️  CUDA no disponible. Whisper usará CPU (más lento).")
+    try:
+        import torch
+        if torch.cuda.is_available():
+            gpu_name = torch.cuda.get_device_name(0)
+            logger.info(f"GPU detectada: {gpu_name}")
+        else:
+            logger.warning("CUDA no disponible. Whisper usará CPU (más lento).")
+    except ImportError:
+        logger.warning("PyTorch no está instalado. La transcripción local no estará disponible.")
 
-    logger.info(f"🌐 Servidor iniciando en http://{config.FLASK_HOST}:{config.FLASK_PORT}")
+    logger.info(f"Servidor iniciando en http://{config.FLASK_HOST}:{config.FLASK_PORT}")
     logger.info("=" * 50)
 
     app.run(

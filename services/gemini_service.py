@@ -100,6 +100,12 @@ Responde SOLO con el nombre de la carpeta, sin explicaciones ni comillas."""
         """
         current_date = datetime.now().strftime("%Y-%m-%d %H:%M")
 
+        # Limitar el texto para no exceder los límites del modelo (~25k tokens)
+        max_chars = 100000
+        if len(transcription_text) > max_chars:
+            transcription_text = transcription_text[:max_chars] + "\n\n[... Transcripción truncada por longitud ...]"
+            logger.warning("Transcripción truncada para resumen por exceder el límite de caracteres")
+
         prompt = f"""Eres un asistente académico experto. Analiza la siguiente transcripción de una clase y genera un resumen estructurado.
 
 TRANSCRIPCIÓN DE LA CLASE:

@@ -151,13 +151,21 @@ class FileManager:
         """
         classes = []
 
-        for folder in self.clases_dir.iterdir():
-            if folder.is_dir():
-                class_info = self._get_class_info(folder)
-                if class_info:
-                    classes.append(class_info)
+        if not self.clases_dir.exists():
+            logger.warning(f"El directorio de clases no existe: {self.clases_dir}")
+            return classes
 
-        # Ordenar por fecha de creación (más reciente primero)
+        try:
+            for folder in self.clases_dir.iterdir():
+                if folder.is_dir():
+                    class_info = self._get_class_info(folder)
+                    if class_info:
+                        classes.append(class_info)
+        except OSError as e:
+            logger.error(f"Error al leer el directorio de clases: {e}")
+            return classes
+
+        # Ordenar por fecha de modificación (más reciente primero)
         classes.sort(key=lambda x: x.get("created_at", ""), reverse=True)
 
         return classes
@@ -267,8 +275,8 @@ class FileManager:
         if not transcription_path.exists() and not summary_path.exists():
             return None
 
-        # Obtener estadísticas
-        created_at = datetime.fromtimestamp(folder.stat().st_ctime)
+        # Obtener estadísticas (st_mtime es más confiable que st_ctime en Linux)
+        created_at = datetime.fromtimestamp(folder.stat().st_mtime)
 
         # Contar segmentos de transcripción
         segment_count = 0
