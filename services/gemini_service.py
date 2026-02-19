@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class GeminiService:
     """Servicio para interactuar con Google Gemini API"""
 
-    def __init__(self, api_key: str, model_name: str = "gemini-3-flashh"):
+    def __init__(self, api_key: str, model_name: str = "gemini-3-flash-preview"):
         """
         Inicializa el servicio de Gemini.
 
