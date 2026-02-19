@@ -306,23 +306,23 @@ def process_video():
 
 @app.route('/api/chat/<path:class_id>/start', methods=['POST'])
 def start_chat(class_id):
-    """Inicia una sesión de chat para una clase"""
+    """Inicia (o restaura) una sesión de chat para una clase, cargando el historial guardado"""
     if not gemini_service:
         return jsonify({"error": "Gemini API no está configurado"}), 500
 
-    # Obtener transcripción
     transcription_text = file_manager.get_transcription_text(class_id)
-
     if not transcription_text:
         return jsonify({"error": "No se encontró la transcripción"}), 404
 
-    # Iniciar sesión de chat
-    gemini_service.start_chat_session(class_id, transcription_text)
+    # Restaurar historial desde disco si existe
+    saved_history = file_manager.get_chat_history(class_id) or []
+    gemini_service.start_chat_session(class_id, transcription_text, history=saved_history)
 
     return jsonify({
         "success": True,
         "message": "Sesión de chat iniciada",
-        "class_id": class_id
+        "class_id": class_id,
+        "restored_messages": len(saved_history)
     })
 
 
@@ -343,15 +343,20 @@ def send_chat_message(class_id):
         return jsonify({"error": "El mensaje no puede estar vacío"}), 400
 
     try:
-        # Si no hay sesión activa, iniciar una
+        # Si no hay sesión activa en memoria, restaurar desde disco
         if class_id not in gemini_service.chat_sessions:
             transcription_text = file_manager.get_transcription_text(class_id)
             if not transcription_text:
                 return jsonify({"error": "No se encontró la transcripción"}), 404
-            gemini_service.start_chat_session(class_id, transcription_text)
+            saved_history = file_manager.get_chat_history(class_id) or []
+            gemini_service.start_chat_session(class_id, transcription_text, history=saved_history)
 
         # Enviar mensaje
         response = gemini_service.chat(class_id, user_message)
+
+        # Persistir historial actualizado en disco
+        updated_history = gemini_service.get_chat_history(class_id)
+        file_manager.save_chat_history(class_id, updated_history)
 
         return jsonify({
             "success": True,
@@ -366,11 +371,15 @@ def send_chat_message(class_id):
 
 @app.route('/api/chat/<path:class_id>/history', methods=['GET'])
 def get_chat_history(class_id):
-    """Obtiene el historial de chat de una clase"""
+    """Obtiene el historial de chat de una clase (primero memoria, luego disco)"""
     if not gemini_service:
         return jsonify({"error": "Gemini API no está configurado"}), 500
 
-    history = gemini_service.get_chat_history(class_id)
+    # Si hay sesión en memoria usarla; si no, leer desde disco
+    if class_id in gemini_service.chat_sessions:
+        history = gemini_service.get_chat_history(class_id)
+    else:
+        history = file_manager.get_chat_history(class_id) or []
 
     return jsonify({
         "class_id": class_id,
@@ -380,15 +389,16 @@ def get_chat_history(class_id):
 
 @app.route('/api/chat/<path:class_id>/clear', methods=['POST'])
 def clear_chat(class_id):
-    """Limpia el historial de chat de una clase"""
+    """Limpia el historial de chat de una clase (memoria y disco)"""
     if not gemini_service:
         return jsonify({"error": "Gemini API no está configurado"}), 500
 
-    success = gemini_service.clear_chat_history(class_id)
+    gemini_service.clear_chat_history(class_id)
+    file_manager.delete_chat_history(class_id)
 
     return jsonify({
-        "success": success,
-        "message": "Historial de chat limpiado" if success else "No había sesión activa"
+        "success": True,
+        "message": "Historial de chat limpiado"
     })
 
 

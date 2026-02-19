@@ -152,13 +152,19 @@ INSTRUCCIONES ADICIONALES:
 No se pudo generar el resumen automáticamente. Por favor, revisa la transcripción directamente.
 """
 
-    def start_chat_session(self, class_id: str, transcription_text: str) -> None:
+    def start_chat_session(
+        self,
+        class_id: str,
+        transcription_text: str,
+        history: list = None
+    ) -> None:
         """
-        Inicia una nueva sesión de chat para una clase.
+        Inicia (o restaura) una sesión de chat para una clase.
 
         Args:
             class_id: Identificador único de la clase
             transcription_text: Texto completo de la transcripción
+            history: Historial previo a restaurar (lista de {role, content}). Si es None se empieza vacío.
         """
         system_prompt = f"""Eres un asistente de estudio especializado. Tu trabajo es ayudar al estudiante a entender y estudiar el contenido de una clase grabada.
 
@@ -175,13 +181,13 @@ INSTRUCCIONES:
 
 Estás listo para ayudar al estudiante con preguntas sobre esta clase."""
 
-        # Crear nueva sesión de chat
         self.chat_sessions[class_id] = {
-            "history": [],
+            "history": list(history) if history else [],
             "context": transcription_text,
             "system_prompt": system_prompt
         }
-        logger.info(f"Sesión de chat iniciada para clase: {class_id}")
+        action = "restaurada" if history else "iniciada"
+        logger.info(f"Sesión de chat {action} para clase: {class_id} ({len(self.chat_sessions[class_id]['history'])} mensajes previos)")
 
     def chat(self, class_id: str, user_message: str) -> str:
         """

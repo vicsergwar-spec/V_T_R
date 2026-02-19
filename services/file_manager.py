@@ -173,6 +173,36 @@ class FileManager:
         with open(summary_path, "r", encoding="utf-8") as f:
             return f.read()
 
+    def get_chat_history(self, class_id: str) -> Optional[list]:
+        """Lee el historial de chat guardado en disco para una clase."""
+        history_path = self.clases_dir / class_id / "chat_historial.json"
+        if not history_path.exists():
+            return None
+        try:
+            with open(history_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"Error al leer historial de chat: {e}")
+            return None
+
+    def save_chat_history(self, class_id: str, history: list) -> None:
+        """Guarda el historial de chat en disco."""
+        history_path = self.clases_dir / class_id / "chat_historial.json"
+        try:
+            with open(history_path, "w", encoding="utf-8") as f:
+                json.dump(history, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning(f"Error al guardar historial de chat: {e}")
+
+    def delete_chat_history(self, class_id: str) -> None:
+        """Elimina el historial de chat del disco."""
+        history_path = self.clases_dir / class_id / "chat_historial.json"
+        if history_path.exists():
+            try:
+                history_path.unlink()
+            except Exception as e:
+                logger.warning(f"Error al eliminar historial de chat: {e}")
+
     def delete_class(self, class_id: str) -> bool:
         class_folder = self.clases_dir / class_id
         if not class_folder.exists():
