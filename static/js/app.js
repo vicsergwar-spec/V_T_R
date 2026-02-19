@@ -10,6 +10,7 @@
 const state = {
     currentSection: 'upload',
     currentClass: null,
+    currentTranscriptionSegments: null,
     classes: [],
     selectedFile: null,
     isProcessing: false,
@@ -59,6 +60,8 @@ const elements = {
     tabContents: document.querySelectorAll('.tab-content'),
     summaryContent: document.getElementById('summaryContent'),
     transcriptionContent: document.getElementById('transcriptionContent'),
+    transcriptionCount: document.getElementById('transcriptionCount'),
+    downloadTranscriptionBtn: document.getElementById('downloadTranscriptionBtn'),
 
     // Chat
     chatMessages: document.getElementById('chatMessages'),
@@ -429,6 +432,9 @@ function initDetail() {
             switchTab(tabName);
         });
     });
+
+    // Botón descargar transcripción
+    elements.downloadTranscriptionBtn.addEventListener('click', downloadTranscription);
 }
 
 function switchTab(tabName) {
@@ -493,6 +499,8 @@ async function loadTranscription(classId) {
         const data = await response.json();
 
         if (data.segments && data.segments.length > 0) {
+            state.currentTranscriptionSegments = data.segments;
+            elements.transcriptionCount.textContent = `${data.segments.length} segmentos`;
             elements.transcriptionContent.innerHTML = data.segments.map(segment => `
                 <div class="transcription-segment">
                     <div class="segment-timestamp">
@@ -506,13 +514,93 @@ async function loadTranscription(classId) {
                 </div>
             `).join('');
         } else {
+            state.currentTranscriptionSegments = null;
+            elements.transcriptionCount.textContent = '';
             elements.transcriptionContent.innerHTML = '<p class="text-muted">No hay transcripción disponible</p>';
         }
 
     } catch (error) {
         console.error('Error loading transcription:', error);
+        state.currentTranscriptionSegments = null;
         elements.transcriptionContent.innerHTML = '<p class="text-muted">Error al cargar la transcripción</p>';
     }
+}
+
+// ============================================
+// Descarga de transcripción para IA
+// ============================================
+
+function buildAiMarkdown(segments, className, date, duration) {
+    const BLOCK_SECONDS = 120; // agrupar cada 2 minutos
+
+    function toSeconds(ts) {
+        if (!ts) return 0;
+        const parts = ts.split(':');
+        return parseInt(parts[0] || 0) * 3600 + parseInt(parts[1] || 0) * 60 + parseFloat(parts[2] || 0);
+    }
+
+    function fmtSeconds(s) {
+        const h = Math.floor(s / 3600);
+        const m = Math.floor((s % 3600) / 60);
+        const sec = s % 60;
+        return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+    }
+
+    const blocks = [];
+    let currentBlock = null;
+    let blockStart = -1;
+
+    for (const seg of segments) {
+        const seconds = toSeconds(seg.timestamp_inicio);
+        const alignedStart = Math.floor(seconds / BLOCK_SECONDS) * BLOCK_SECONDS;
+        if (currentBlock === null || alignedStart !== blockStart) {
+            if (currentBlock) blocks.push(currentBlock);
+            blockStart = alignedStart;
+            currentBlock = { label: fmtSeconds(blockStart), texts: [] };
+        }
+        const text = (seg.texto || '').trim();
+        if (text) currentBlock.texts.push(text);
+    }
+    if (currentBlock && currentBlock.texts.length > 0) blocks.push(currentBlock);
+
+    const lines = [
+        `# ${className}`,
+        ``,
+        `**Fecha:** ${date}  `,
+        `**Duración:** ${duration}  `,
+        `**Segmentos:** ${segments.length}  `,
+        ``,
+        `---`,
+        ``
+    ];
+
+    for (const block of blocks) {
+        lines.push(`[${block.label}]`);
+        lines.push(block.texts.join(' '));
+        lines.push(``);
+    }
+
+    return lines.join('\n');
+}
+
+function downloadTranscription() {
+    if (!state.currentClass || !state.currentTranscriptionSegments) return;
+
+    const segments = state.currentTranscriptionSegments;
+    const className = state.currentClass.name || state.currentClass.id;
+    const date = state.currentClass.created_at_formatted || '';
+    const duration = segments.length > 0
+        ? (segments[segments.length - 1].timestamp_fin || segments[segments.length - 1].timestamp_inicio || '')
+        : '';
+
+    const markdown = buildAiMarkdown(segments, className, date, duration);
+    const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${state.currentClass.id}_transcripcion.md`;
+    a.click();
+    URL.revokeObjectURL(url);
 }
 
 // ============================================
