@@ -384,6 +384,117 @@ body {
     outline: none;
 }
 
+/* Selector de carpeta destino */
+.folder-select-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.folder-select-row select {
+    flex: 1;
+}
+
+.btn-new-folder {
+    padding: 10px 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition-fast);
+    flex-shrink: 0;
+}
+
+.btn-new-folder:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border-color: var(--border-light);
+}
+
+.btn-new-folder svg {
+    width: 16px;
+    height: 16px;
+}
+
+.new-folder-form {
+    margin-top: 12px;
+    padding: 14px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+}
+
+.new-folder-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.folder-input {
+    flex: 1;
+    padding: 10px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+}
+
+.folder-input:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+}
+
+.folder-parent-select {
+    padding: 10px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+.new-folder-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.btn-create-folder {
+    padding: 8px 16px;
+    background: var(--accent-primary);
+    border: none;
+    border-radius: var(--radius-md);
+    color: white;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: opacity var(--transition-fast);
+}
+
+.btn-create-folder:hover {
+    opacity: 0.9;
+}
+
+.btn-cancel-folder {
+    padding: 8px 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.btn-cancel-folder:hover {
+    background: var(--bg-hover);
+}
+
 /* Botones */
 .btn-primary {
     display: inline-flex;
@@ -571,6 +682,21 @@ body {
 .btn-icon svg {
     width: 18px;
     height: 18px;
+}
+
+.class-folder-badge {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+}
+
+.class-folder-badge svg {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
 }
 
 .class-card-title {

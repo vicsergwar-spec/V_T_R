@@ -111,7 +111,7 @@ def get_classes():
     return jsonify({"classes": classes})
 
 
-@app.route('/api/classes/<class_id>', methods=['GET'])
+@app.route('/api/classes/<path:class_id>', methods=['GET'])
 def get_class(class_id):
     """Obtiene información de una clase específica"""
     class_info = file_manager.get_class_by_id(class_id)
@@ -127,7 +127,7 @@ def get_class(class_id):
     return jsonify(class_info)
 
 
-@app.route('/api/classes/<class_id>/transcription', methods=['GET'])
+@app.route('/api/classes/<path:class_id>/transcription', methods=['GET'])
 def get_transcription(class_id):
     """Obtiene la transcripción de una clase"""
     segments = file_manager.get_transcription(class_id)
@@ -142,7 +142,7 @@ def get_transcription(class_id):
     })
 
 
-@app.route('/api/classes/<class_id>/summary', methods=['GET'])
+@app.route('/api/classes/<path:class_id>/summary', methods=['GET'])
 def get_summary(class_id):
     """Obtiene el resumen de una clase"""
     summary = file_manager.get_summary(class_id)
@@ -156,7 +156,7 @@ def get_summary(class_id):
     })
 
 
-@app.route('/api/classes/<class_id>', methods=['DELETE'])
+@app.route('/api/classes/<path:class_id>', methods=['DELETE'])
 def delete_class(class_id):
     """Elimina una clase"""
     success = file_manager.delete_class(class_id)
@@ -165,6 +165,27 @@ def delete_class(class_id):
         return jsonify({"error": "No se pudo eliminar la clase"}), 404
 
     return jsonify({"message": "Clase eliminada exitosamente"})
+
+
+@app.route('/api/folders', methods=['GET'])
+def get_folders():
+    """Obtiene el árbol plano de carpetas de organización"""
+    folders = file_manager.get_folder_tree()
+    return jsonify({"folders": folders})
+
+
+@app.route('/api/folders', methods=['POST'])
+def create_folder():
+    """Crea una carpeta de organización"""
+    data = request.get_json()
+    if not data or not data.get('path', '').strip():
+        return jsonify({"error": "Se requiere el campo 'path'"}), 400
+    try:
+        folder = file_manager.create_folder(data['path'].strip())
+        return jsonify({"success": True, "folder": folder})
+    except Exception as e:
+        logger.error(f"Error creando carpeta: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/process', methods=['POST'])
@@ -199,6 +220,9 @@ def process_video():
     whisper_model = request.form.get('model', config.DEFAULT_WHISPER_MODEL)
     if whisper_model not in config.WHISPER_MODELS:
         whisper_model = config.DEFAULT_WHISPER_MODEL
+
+    # Carpeta destino (opcional)
+    folder_path = request.form.get('folder_path', '').strip()
 
     # Verificar que si se usa OpenAI, la key esté disponible
     if whisper_model == "openai" and not config.OPENAI_API_KEY:
@@ -241,7 +265,7 @@ def process_video():
         folder_name = gemini_service.generate_folder_name(result["text"])
 
         # 5. Crear carpeta y guardar transcripción
-        class_folder = file_manager.create_class_folder(folder_name)
+        class_folder = file_manager.create_class_folder(folder_name, parent_path=folder_path)
         file_manager.save_transcription(result["segments"], class_folder)
 
         # 6. Generar y guardar resumen
@@ -280,7 +304,7 @@ def process_video():
 
 # ============== RUTAS DE CHAT ==============
 
-@app.route('/api/chat/<class_id>/start', methods=['POST'])
+@app.route('/api/chat/<path:class_id>/start', methods=['POST'])
 def start_chat(class_id):
     """Inicia una sesión de chat para una clase"""
     if not gemini_service:
@@ -302,7 +326,7 @@ def start_chat(class_id):
     })
 
 
-@app.route('/api/chat/<class_id>/message', methods=['POST'])
+@app.route('/api/chat/<path:class_id>/message', methods=['POST'])
 def send_chat_message(class_id):
     """Envía un mensaje en el chat de una clase"""
     if not gemini_service:
@@ -340,7 +364,7 @@ def send_chat_message(class_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/chat/<class_id>/history', methods=['GET'])
+@app.route('/api/chat/<path:class_id>/history', methods=['GET'])
 def get_chat_history(class_id):
     """Obtiene el historial de chat de una clase"""
     if not gemini_service:
@@ -354,7 +378,7 @@ def get_chat_history(class_id):
     })
 
 
-@app.route('/api/chat/<class_id>/clear', methods=['POST'])
+@app.route('/api/chat/<path:class_id>/clear', methods=['POST'])
 def clear_chat(class_id):
     """Limpia el historial de chat de una clase"""
     if not gemini_service:

@@ -65,6 +65,7 @@ class Transcriber:
             import whisper
             self.model = whisper.load_model(self.model_name, device=self.device)
             logger.info(f"Modelo cargado exitosamente en {self.model.device}")
+            self._warmup()
         except Exception as e:
             logger.error(f"Error al cargar modelo Whisper: {e}")
             raise
@@ -289,6 +290,23 @@ class Transcriber:
         minutes = int((seconds % 3600) // 60)
         secs = seconds % 60
         return f"{hours:02d}:{minutes:02d}:{secs:06.3f}"
+
+    def _warmup(self) -> None:
+        """Ejecuta una inferencia corta para inicializar los kernels CUDA antes de la transcripción real"""
+        if self.device != "cuda" or self.model is None:
+            return
+        try:
+            import numpy as np
+            import whisper as _whisper
+            logger.info("Calentando GPU (warmup)...")
+            dummy = np.zeros(16000, dtype=np.float32)  # 1 segundo de silencio a 16kHz
+            audio = _whisper.pad_or_trim(dummy)
+            mel = _whisper.log_mel_spectrogram(audio).to(self.device)
+            with torch.no_grad():
+                self.model.encoder(mel.unsqueeze(0))
+            logger.info("GPU calentada correctamente")
+        except Exception as e:
+            logger.warning(f"Warmup fallido (no crítico): {e}")
 
     def get_gpu_info(self) -> dict:
         """Obtiene información sobre la GPU disponible"""

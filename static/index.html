@@ -95,6 +95,34 @@
                                 <option value="openai">OpenAI API (En la nube, sin GPU)</option>
                             </select>
                         </div>
+                        <div class="option-group">
+                            <label for="folderSelect">Carpeta destino:</label>
+                            <div class="folder-select-row">
+                                <select id="folderSelect">
+                                    <option value="">Raíz (sin carpeta)</option>
+                                </select>
+                                <button type="button" class="btn-new-folder" id="newFolderBtn" title="Nueva carpeta">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                        <line x1="12" y1="5" x2="12" y2="19"/>
+                                        <line x1="5" y1="12" x2="19" y2="12"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Formulario inline para nueva carpeta -->
+                    <div id="newFolderForm" class="new-folder-form" style="display:none">
+                        <div class="new-folder-row">
+                            <input type="text" id="newFolderName" class="folder-input" placeholder="Nombre de la carpeta...">
+                            <select id="newFolderParentSelect" class="folder-parent-select">
+                                <option value="">En la raíz</option>
+                            </select>
+                        </div>
+                        <div class="new-folder-actions">
+                            <button type="button" id="createFolderBtn" class="btn-create-folder">Crear carpeta</button>
+                            <button type="button" id="cancelFolderBtn" class="btn-cancel-folder">Cancelar</button>
+                        </div>
                     </div>
 
                     <button class="btn-primary btn-process" id="processBtn" disabled>
