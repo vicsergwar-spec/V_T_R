@@ -2,7 +2,7 @@
 Servicio de interacción con Google Gemini API
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 import google.generativeai as genai
 
@@ -153,19 +153,63 @@ INSTRUCCIONES ADICIONALES:
 No se pudo generar el resumen automáticamente. Por favor, revisa la transcripción directamente.
 """
 
+    def _build_cached_model(self, system_instruction: str, existing_cache_name: str = None):
+        """
+        Intenta crear/recuperar un caché de Gemini para la transcripción.
+        Devuelve (model, cache_name | None).
+        Si el caché no está disponible o la transcripción es muy corta, hace fallback
+        a system_instruction estándar y devuelve cache_name=None.
+        """
+        # 1. Intentar recuperar caché existente
+        if existing_cache_name:
+            try:
+                cache = genai.caching.CachedContent.get(existing_cache_name)
+                model = genai.GenerativeModel.from_cached_content(cached_content=cache)
+                logger.info(f"Caché de Gemini reutilizado: {existing_cache_name}")
+                return model, existing_cache_name
+            except Exception:
+                logger.info("Caché anterior expirado o inválido, creando uno nuevo")
+
+        # 2. Crear nuevo caché
+        try:
+            cache = genai.caching.CachedContent.create(
+                model=f"models/{self._model_name}",
+                system_instruction=system_instruction,
+                ttl=timedelta(hours=1),
+            )
+            model = genai.GenerativeModel.from_cached_content(cached_content=cache)
+            logger.info(f"Caché de Gemini creado: {cache.name}")
+            return model, cache.name
+        except Exception as e:
+            # Fallback: transcripción muy corta (< mínimo tokens), API sin soporte, etc.
+            logger.warning(
+                f"Context caching no disponible ({type(e).__name__}), "
+                "usando system_instruction estándar"
+            )
+            model = genai.GenerativeModel(
+                self._model_name,
+                system_instruction=system_instruction,
+            )
+            return model, None
+
     def start_chat_session(
         self,
         class_id: str,
         transcription_text: str,
-        history: list = None
-    ) -> None:
+        history: list = None,
+        cached_content_name: str = None,
+    ) -> Optional[str]:
         """
         Inicia (o restaura) una sesión de chat para una clase.
 
         Args:
             class_id: Identificador único de la clase
             transcription_text: Texto completo de la transcripción
-            history: Historial previo a restaurar (lista de {role, content}). Si es None se empieza vacío.
+            history: Historial previo a restaurar. Si es None se empieza vacío.
+            cached_content_name: Nombre de caché de Gemini guardado previamente.
+
+        Returns:
+            El nombre del caché usado/creado (para persistirlo), o None si no se usó caché.
         """
         system_instruction = f"""Eres un asistente de estudio especializado. Tu trabajo es ayudar al estudiante a entender y estudiar el contenido de una clase grabada.
 
@@ -180,14 +224,8 @@ INSTRUCCIONES:
 5. Puedes ayudar a resumir secciones específicas, explicar conceptos, o preparar para exámenes
 6. Usa un tono amigable pero académico"""
 
-        # Modelo con system_instruction por sesión — la transcripción se envía UNA sola vez
-        # y Gemini Flash la cachea implícitamente, reduciendo tokens en turnos siguientes
-        session_model = genai.GenerativeModel(
-            self._model_name,
-            system_instruction=system_instruction
-        )
+        session_model, cache_name = self._build_cached_model(system_instruction, cached_content_name)
 
-        # Convertir historial guardado al formato nativo del SDK
         sdk_history = [
             {"role": msg["role"], "parts": [msg["content"]]}
             for msg in (history or [])
@@ -198,7 +236,12 @@ INSTRUCCIONES:
             "history": list(history) if history else [],
         }
         action = "restaurada" if history else "iniciada"
-        logger.info(f"Sesión de chat {action} para clase: {class_id} ({len(self.chat_sessions[class_id]['history'])} mensajes previos)")
+        logger.info(
+            f"Sesión de chat {action} para clase: {class_id} "
+            f"({len(self.chat_sessions[class_id]['history'])} mensajes previos, "
+            f"caché: {'sí' if cache_name else 'no'})"
+        )
+        return cache_name
 
     def chat(self, class_id: str, user_message: str) -> str:
         """

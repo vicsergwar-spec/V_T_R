@@ -158,7 +158,19 @@ def get_summary(class_id):
 
 @app.route('/api/classes/<path:class_id>', methods=['DELETE'])
 def delete_class(class_id):
-    """Elimina una clase"""
+    """Elimina una clase y libera su caché de Gemini si existe"""
+    # Liberar caché de Gemini antes de borrar los archivos
+    if gemini_service:
+        cache_name = file_manager.get_cache_name(class_id)
+        if cache_name:
+            try:
+                import google.generativeai as genai_mod
+                cache = genai_mod.caching.CachedContent.get(cache_name)
+                cache.delete()
+                logger.info(f"Caché de Gemini eliminado: {cache_name}")
+            except Exception:
+                pass  # Ya expiró o no existe; no es crítico
+
     success = file_manager.delete_class(class_id)
 
     if not success:
@@ -314,15 +326,26 @@ def start_chat(class_id):
     if not transcription_text:
         return jsonify({"error": "No se encontró la transcripción"}), 404
 
-    # Restaurar historial desde disco si existe
+    # Restaurar historial y nombre de caché desde disco
     saved_history = file_manager.get_chat_history(class_id) or []
-    gemini_service.start_chat_session(class_id, transcription_text, history=saved_history)
+    saved_cache_name = file_manager.get_cache_name(class_id)
+
+    new_cache_name = gemini_service.start_chat_session(
+        class_id, transcription_text,
+        history=saved_history,
+        cached_content_name=saved_cache_name,
+    )
+
+    # Guardar el nuevo nombre de caché si cambió (caché creado o renovado)
+    if new_cache_name and new_cache_name != saved_cache_name:
+        file_manager.save_cache_name(class_id, new_cache_name)
 
     return jsonify({
         "success": True,
         "message": "Sesión de chat iniciada",
         "class_id": class_id,
-        "restored_messages": len(saved_history)
+        "restored_messages": len(saved_history),
+        "cached": new_cache_name is not None,
     })
 
 
@@ -349,7 +372,14 @@ def send_chat_message(class_id):
             if not transcription_text:
                 return jsonify({"error": "No se encontró la transcripción"}), 404
             saved_history = file_manager.get_chat_history(class_id) or []
-            gemini_service.start_chat_session(class_id, transcription_text, history=saved_history)
+            saved_cache_name = file_manager.get_cache_name(class_id)
+            new_cache_name = gemini_service.start_chat_session(
+                class_id, transcription_text,
+                history=saved_history,
+                cached_content_name=saved_cache_name,
+            )
+            if new_cache_name and new_cache_name != saved_cache_name:
+                file_manager.save_cache_name(class_id, new_cache_name)
 
         # Enviar mensaje
         response = gemini_service.chat(class_id, user_message)

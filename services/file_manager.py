@@ -203,6 +203,25 @@ class FileManager:
             except Exception as e:
                 logger.warning(f"Error al eliminar historial de chat: {e}")
 
+    def get_cache_name(self, class_id: str) -> Optional[str]:
+        """Lee el nombre del caché de Gemini guardado para una clase."""
+        path = self.clases_dir / class_id / "gemini_cache.txt"
+        if not path.exists():
+            return None
+        content = path.read_text(encoding="utf-8").strip()
+        return content if content else None
+
+    def save_cache_name(self, class_id: str, cache_name: str) -> None:
+        """Guarda el nombre del caché de Gemini para una clase."""
+        path = self.clases_dir / class_id / "gemini_cache.txt"
+        path.write_text(cache_name, encoding="utf-8")
+
+    def delete_cache_name(self, class_id: str) -> None:
+        """Elimina el archivo con el nombre del caché de Gemini."""
+        path = self.clases_dir / class_id / "gemini_cache.txt"
+        if path.exists():
+            path.unlink()
+
     def delete_class(self, class_id: str) -> bool:
         class_folder = self.clases_dir / class_id
         if not class_folder.exists():
