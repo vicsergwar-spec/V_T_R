@@ -200,6 +200,10 @@ def process_video():
     if whisper_model not in config.WHISPER_MODELS:
         whisper_model = config.DEFAULT_WHISPER_MODEL
 
+    # Verificar que si se usa OpenAI, la key esté disponible
+    if whisper_model == "openai" and not config.OPENAI_API_KEY:
+        return jsonify({"error": "Se seleccionó OpenAI API pero OPENAI_API_KEY no está configurada en el servidor"}), 400
+
     video_path = None
     audio_path = None
 
@@ -215,7 +219,22 @@ def process_video():
         # 3. Transcribir
         logger.info(f"Transcribiendo con modelo {whisper_model}...")
         trans = get_transcriber(whisper_model)
-        result = trans.transcribe(audio_path)
+        try:
+            result = trans.transcribe(audio_path)
+        except Exception as transcribe_error:
+            logger.error(f"Error en transcripción con modelo '{whisper_model}': {transcribe_error}")
+            file_manager.cleanup_temp_files(video_path, audio_path)
+            video_path = None
+            audio_path = None
+            error_response = {
+                "error": str(transcribe_error),
+                "message": "Error al transcribir el audio"
+            }
+            # Si falló un modelo local y OpenAI está disponible, ofrecer la opción al usuario
+            if whisper_model in ("small", "medium") and config.OPENAI_API_KEY:
+                error_response["gpu_failed"] = True
+                error_response["openai_available"] = True
+            return jsonify(error_response), 500
 
         # 4. Generar nombre de carpeta
         logger.info("Generando nombre de carpeta...")

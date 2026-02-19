@@ -13,7 +13,8 @@ const state = {
     classes: [],
     selectedFile: null,
     isProcessing: false,
-    chatHistory: []
+    chatHistory: [],
+    openaiConfigured: false
 };
 
 // ============================================
@@ -154,6 +155,14 @@ async function checkSystemStatus() {
             elements.geminiText.textContent = 'Gemini no configurado';
         }
 
+        // OpenAI: guardar estado y deshabilitar opción si no está configurada
+        state.openaiConfigured = data.openai_configured || false;
+        const openaiOption = elements.modelSelect.querySelector('option[value="openai"]');
+        if (openaiOption && !state.openaiConfigured) {
+            openaiOption.disabled = true;
+            openaiOption.textContent = 'OpenAI API (no configurada)';
+        }
+
     } catch (error) {
         console.error('Error checking status:', error);
         elements.gpuStatus.className = 'status-dot error';
@@ -286,6 +295,18 @@ async function processVideo() {
                 loadClasses();
                 showClassDetail(data.class.id);
             }, 1000);
+
+        } else if (data.gpu_failed && data.openai_available) {
+            // La GPU falló y OpenAI está disponible: ofrecer al usuario la opción de reintentar
+            elements.progressContainer.style.display = 'none';
+            showConfirmModal(
+                'Fallo en la tarjeta gráfica',
+                '❌ La transcripción con la GPU falló.\n\n¿Deseas intentarlo usando OpenAI API (en la nube)?',
+                () => {
+                    elements.modelSelect.value = 'openai';
+                    processVideo();
+                }
+            );
 
         } else {
             throw new Error(data.error || 'Error desconocido');
