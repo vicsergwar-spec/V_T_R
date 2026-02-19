@@ -560,11 +560,8 @@ async function showClassDetail(classId) {
         // Cargar transcripción
         await loadTranscription(classId);
 
-        // Resetear chat
-        resetChat();
-
-        // Iniciar sesión de chat
-        await startChatSession(classId);
+        // Iniciar sesión de chat y restaurar historial
+        await loadClassChat(classId);
 
         // Mostrar sección de detalle
         elements.sections.forEach(s => s.classList.remove('active'));
@@ -716,11 +713,26 @@ function initChat() {
     elements.clearChatBtn.addEventListener('click', clearChat);
 }
 
-async function startChatSession(classId) {
+async function loadClassChat(classId) {
     try {
+        // Iniciar sesión en el servidor (restaura historial desde disco en memoria)
         await fetch(`/api/chat/${classId}/start`, { method: 'POST' });
+
+        // Obtener historial guardado
+        const response = await fetch(`/api/chat/${classId}/history`);
+        const data = await response.json();
+        const history = data.history || [];
+
+        if (history.length > 0) {
+            // Mostrar mensajes previos en la UI
+            elements.chatMessages.innerHTML = '';
+            history.forEach(msg => addChatMessage(msg.role === 'model' ? 'assistant' : msg.role, msg.content));
+        } else {
+            resetChat();
+        }
     } catch (error) {
-        console.error('Error starting chat session:', error);
+        console.error('Error loading chat session:', error);
+        resetChat();
     }
 }
 
