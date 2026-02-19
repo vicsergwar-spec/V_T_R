@@ -95,14 +95,32 @@ class Transcriber:
 
         try:
             # Transcribir con Whisper
-            result = self.model.transcribe(
-                audio_path,
-                language=language,
-                task="transcribe",
-                verbose=False,
-                fp16=(self.device == "cuda"),  # FP16 solo en GPU
-                word_timestamps=False
-            )
+            use_fp16 = (self.device == "cuda")
+            try:
+                result = self.model.transcribe(
+                    audio_path,
+                    language=language,
+                    task="transcribe",
+                    verbose=False,
+                    fp16=use_fp16,
+                    word_timestamps=False
+                )
+            except (RuntimeError, ValueError) as fp16_error:
+                error_msg = str(fp16_error).lower()
+                if use_fp16 and ("nan" in error_msg or "invalid values" in error_msg):
+                    logger.warning(
+                        "fp16 produjo NaN en GPU — reintentando con fp32 (más lento pero estable)..."
+                    )
+                    result = self.model.transcribe(
+                        audio_path,
+                        language=language,
+                        task="transcribe",
+                        verbose=False,
+                        fp16=False,
+                        word_timestamps=False
+                    )
+                else:
+                    raise
 
             # Procesar segmentos
             raw_segments = result.get("segments", [])
