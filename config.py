@@ -44,10 +44,15 @@ WHISPER_MODELS = {
 DEFAULT_WHISPER_MODEL = "small"
 
 # Configuración de Gemini
+claude/review-code-gpu-fallback-tp3ah
 # Para cambiar de modelo: pon aquí el ID exacto que ves en Google AI Studio
 # Ejemplo: "gemini-3-flash-preview", "gemini-2.5-flash-preview-FECHA", etc.
 GEMINI_MODEL = "gemini-3-flash-preview"
 GEMINI_MODEL_PRO = "gemini-3-flash-preview"
+
+GEMINI_MODEL = "gemini-3-flash-preview"  # Modelo rápido y eficiente
+GEMINI_MODEL_PRO = "gemini-3-flash-preview"  # Modelo más potente para análisis complejo
+claude/setup-video-transcriptor-B9uUF
 
 # Configuración de FFmpeg
 AUDIO_FORMAT = "wav"
