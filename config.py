@@ -44,8 +44,8 @@ WHISPER_MODELS = {
 DEFAULT_WHISPER_MODEL = "small"
 
 # Configuración de Gemini
-GEMINI_MODEL = "gemini-3-flash"  # Modelo rápido y eficiente
-GEMINI_MODEL_PRO = "gemini-3-flash"  # Modelo más potente para análisis complejo
+GEMINI_MODEL = "gemini-3-flash-preview"  # Modelo rápido y eficiente
+GEMINI_MODEL_PRO = "gemini-3-flash-preview"  # Modelo más potente para análisis complejo
 
 # Configuración de FFmpeg
 AUDIO_FORMAT = "wav"
