@@ -772,6 +772,43 @@ body {
 }
 
 /* Transcripción */
+.transcription-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.transcription-count {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.btn-download-transcription {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.btn-download-transcription:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-light);
+    color: var(--text-primary);
+}
+
+.btn-download-transcription svg {
+    width: 15px;
+    height: 15px;
+}
+
 .transcription-content {
     background: var(--bg-card);
     border: 1px solid var(--border-color);
