@@ -25,6 +25,7 @@ class GeminiService:
             raise ValueError("Se requiere una API key de Gemini")
 
         genai.configure(api_key=api_key)
+        self._model_name = model_name  # guardado para crear instancias por sesión
         self.model = genai.GenerativeModel(model_name)
         self.chat_sessions = {}  # Almacena sesiones de chat por clase
         logger.info(f"Servicio Gemini inicializado con modelo: {model_name}")
@@ -166,9 +167,9 @@ No se pudo generar el resumen automáticamente. Por favor, revisa la transcripci
             transcription_text: Texto completo de la transcripción
             history: Historial previo a restaurar (lista de {role, content}). Si es None se empieza vacío.
         """
-        system_prompt = f"""Eres un asistente de estudio especializado. Tu trabajo es ayudar al estudiante a entender y estudiar el contenido de una clase grabada.
+        system_instruction = f"""Eres un asistente de estudio especializado. Tu trabajo es ayudar al estudiante a entender y estudiar el contenido de una clase grabada.
 
-CONTEXTO - TRANSCRIPCIÓN DE LA CLASE:
+TRANSCRIPCIÓN DE LA CLASE:
 {transcription_text}
 
 INSTRUCCIONES:
@@ -177,14 +178,24 @@ INSTRUCCIONES:
 3. Sé claro y didáctico en tus explicaciones
 4. Si el estudiante pregunta sobre un tema, proporciona ejemplos de la clase si los hay
 5. Puedes ayudar a resumir secciones específicas, explicar conceptos, o preparar para exámenes
-6. Usa un tono amigable pero académico
+6. Usa un tono amigable pero académico"""
 
-Estás listo para ayudar al estudiante con preguntas sobre esta clase."""
+        # Modelo con system_instruction por sesión — la transcripción se envía UNA sola vez
+        # y Gemini Flash la cachea implícitamente, reduciendo tokens en turnos siguientes
+        session_model = genai.GenerativeModel(
+            self._model_name,
+            system_instruction=system_instruction
+        )
+
+        # Convertir historial guardado al formato nativo del SDK
+        sdk_history = [
+            {"role": msg["role"], "parts": [msg["content"]]}
+            for msg in (history or [])
+        ]
 
         self.chat_sessions[class_id] = {
+            "chat": session_model.start_chat(history=sdk_history),
             "history": list(history) if history else [],
-            "context": transcription_text,
-            "system_prompt": system_prompt
         }
         action = "restaurada" if history else "iniciada"
         logger.info(f"Sesión de chat {action} para clase: {class_id} ({len(self.chat_sessions[class_id]['history'])} mensajes previos)")
@@ -205,24 +216,13 @@ Estás listo para ayudar al estudiante con preguntas sobre esta clase."""
 
         session = self.chat_sessions[class_id]
 
-        # Construir el historial para enviar a Gemini
-        messages = [{"role": "user", "parts": [session["system_prompt"]]}]
-        messages.append({"role": "model", "parts": ["Entendido. Estoy listo para ayudarte con preguntas sobre esta clase. ¿Qué te gustaría saber?"]})
-
-        # Agregar historial previo
-        for msg in session["history"]:
-            messages.append({"role": msg["role"], "parts": [msg["content"]]})
-
-        # Agregar mensaje actual
-        messages.append({"role": "user", "parts": [user_message]})
-
         try:
-            # Crear chat con historial
-            chat = self.model.start_chat(history=messages[:-1])
-            response = chat.send_message(user_message)
+            # Enviar solo el nuevo mensaje; el historial y system_instruction
+            # ya viven en el objeto chat del SDK (no se reenvían desde cero)
+            response = session["chat"].send_message(user_message)
             assistant_message = response.text.strip()
 
-            # Guardar en historial
+            # Guardar en historial local (para persistencia en disco)
             session["history"].append({"role": "user", "content": user_message})
             session["history"].append({"role": "model", "content": assistant_message})
 
