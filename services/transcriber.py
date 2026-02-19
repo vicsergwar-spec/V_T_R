@@ -193,32 +193,26 @@ class Transcriber:
     def transcribe(
         self,
         audio_path: str,
-        use_api_fallback: bool = True,
         progress_callback: callable = None
     ) -> dict:
         """
-        Transcribe audio intentando primero local, luego API si falla.
+        Transcribe audio usando el modelo configurado.
+
+        Si model_name es 'openai', usa la API de OpenAI directamente.
+        Si es un modelo local ('small'/'medium') y falla, lanza la excepción
+        sin hacer fallback automático a OpenAI.
 
         Args:
             audio_path: Ruta al archivo de audio
-            use_api_fallback: Si usar API de OpenAI como respaldo
             progress_callback: Función para reportar progreso
 
         Returns:
             Diccionario con la transcripción
         """
-        try:
+        if self.model_name == "openai":
+            return self.transcribe_openai_api(audio_path, progress_callback)
+        else:
             return self.transcribe_local(audio_path, progress_callback=progress_callback)
-        except Exception as e:
-            logger.warning(f"Transcripción local falló: {e}")
-
-            if use_api_fallback and self.openai_api_key:
-                logger.info("Intentando con API de OpenAI...")
-                return self.transcribe_openai_api(audio_path, progress_callback)
-            else:
-                raise RuntimeError(
-                    f"La transcripción local falló y no hay respaldo disponible: {e}"
-                )
 
     def save_transcription_jsonl(self, segments: list, output_path: str) -> str:
         """

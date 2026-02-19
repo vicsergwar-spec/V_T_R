@@ -34,6 +34,11 @@ WHISPER_MODELS = {
         "name": "medium",
         "description": "Modelo mediano - Requiere más VRAM",
         "vram_required": "~5GB"
+    },
+    "openai": {
+        "name": "openai",
+        "description": "API de OpenAI Whisper - En la nube, no requiere GPU",
+        "vram_required": "N/A"
     }
 }
 DEFAULT_WHISPER_MODEL = "small"
