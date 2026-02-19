@@ -63,6 +63,15 @@ const elements = {
     transcriptionCount: document.getElementById('transcriptionCount'),
     downloadTranscriptionBtn: document.getElementById('downloadTranscriptionBtn'),
 
+    // Carpetas
+    folderSelect: document.getElementById('folderSelect'),
+    newFolderBtn: document.getElementById('newFolderBtn'),
+    newFolderForm: document.getElementById('newFolderForm'),
+    newFolderName: document.getElementById('newFolderName'),
+    newFolderParentSelect: document.getElementById('newFolderParentSelect'),
+    createFolderBtn: document.getElementById('createFolderBtn'),
+    cancelFolderBtn: document.getElementById('cancelFolderBtn'),
+
     // Chat
     chatMessages: document.getElementById('chatMessages'),
     chatInput: document.getElementById('chatInput'),
@@ -219,6 +228,24 @@ function initUpload() {
 
     // Procesar
     elements.processBtn.addEventListener('click', processVideo);
+
+    // Nueva carpeta
+    elements.newFolderBtn.addEventListener('click', () => {
+        elements.newFolderForm.style.display = 'block';
+        elements.newFolderName.focus();
+    });
+    elements.cancelFolderBtn.addEventListener('click', () => {
+        elements.newFolderForm.style.display = 'none';
+        elements.newFolderName.value = '';
+    });
+    elements.createFolderBtn.addEventListener('click', createFolder);
+    elements.newFolderName.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') createFolder();
+        if (e.key === 'Escape') elements.cancelFolderBtn.click();
+    });
+
+    // Cargar carpetas al iniciar
+    loadFolders();
 }
 
 function handleFileSelect(file) {
@@ -257,6 +284,7 @@ async function processVideo() {
     const formData = new FormData();
     formData.append('video', state.selectedFile);
     formData.append('model', elements.modelSelect.value);
+    formData.append('folder_path', elements.folderSelect.value);
 
     try {
         // Simular pasos de progreso
@@ -332,6 +360,64 @@ function updateProgress(percent, text) {
 }
 
 // ============================================
+// Gestión de carpetas
+// ============================================
+
+async function loadFolders() {
+    try {
+        const response = await fetch('/api/folders');
+        const data = await response.json();
+        populateFolderSelects(data.folders || []);
+    } catch (error) {
+        console.error('Error cargando carpetas:', error);
+    }
+}
+
+function populateFolderSelects(folders) {
+    const buildOptions = (includeRoot, rootLabel) => {
+        const root = `<option value="">${rootLabel}</option>`;
+        const opts = folders.map(f => {
+            const indent = '\u00a0\u00a0'.repeat(f.depth) + (f.depth > 0 ? '└ ' : '');
+            return `<option value="${escapeHtml(f.path)}">${indent}${escapeHtml(f.name)}</option>`;
+        }).join('');
+        return root + opts;
+    };
+
+    elements.folderSelect.innerHTML = buildOptions(true, 'Raíz (sin carpeta)');
+    elements.newFolderParentSelect.innerHTML = buildOptions(true, 'En la raíz');
+}
+
+async function createFolder() {
+    const name = elements.newFolderName.value.trim();
+    if (!name) {
+        showToast('error', 'Error', 'Escribe un nombre para la carpeta');
+        return;
+    }
+    const parent = elements.newFolderParentSelect.value;
+    const fullPath = parent ? `${parent}/${name}` : name;
+
+    try {
+        const response = await fetch('/api/folders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: fullPath })
+        });
+        const data = await response.json();
+        if (data.success) {
+            showToast('success', 'Carpeta creada', `"${data.folder.name}" lista para usar`);
+            elements.newFolderForm.style.display = 'none';
+            elements.newFolderName.value = '';
+            await loadFolders();
+            elements.folderSelect.value = data.folder.path;
+        } else {
+            throw new Error(data.error || 'Error al crear carpeta');
+        }
+    } catch (error) {
+        showToast('error', 'Error', error.message);
+    }
+}
+
+// ============================================
 // Lista de Clases
 // ============================================
 
@@ -376,6 +462,7 @@ function renderClasses() {
                     </button>
                 </div>
             </div>
+            ${cls.folder_path ? `<div class="class-folder-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>${escapeHtml(cls.folder_path.replace(/\//g, ' / '))}</div>` : ''}
             <h3 class="class-card-title">${escapeHtml(cls.name)}</h3>
             <div class="class-card-date">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
