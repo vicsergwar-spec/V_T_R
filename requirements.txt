@@ -6,7 +6,7 @@ flask>=3.0.0
 flask-cors>=4.0.0
 
 # Google Gemini API
-google-generativeai>=0.5.0
+google-generativeai>=0.7.0  # 0.7+ incluye la API de Context Caching
 
 # OpenAI (opcional, para Whisper API como respaldo)
 openai>=1.12.0
