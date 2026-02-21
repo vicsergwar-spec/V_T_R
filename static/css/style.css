@@ -611,9 +611,96 @@ body {
    ============================================ */
 
 .classes-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+/* Grid de tarjetas dentro de cada grupo/carpeta */
+.classes-group {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
     gap: 20px;
+}
+
+/* ============================================
+   Vista de carpetas en "Mis Clases"
+   ============================================ */
+
+.folder-section {
+    display: flex;
+    flex-direction: column;
+}
+
+.folder-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    user-select: none;
+}
+
+.folder-section-header:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent-primary);
+}
+
+.folder-section-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.folder-icon {
+    width: 18px;
+    height: 18px;
+    color: var(--accent-secondary);
+    flex-shrink: 0;
+}
+
+.folder-section-name {
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.folder-class-count {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 1px 8px;
+}
+
+.folder-toggle-arrow {
+    width: 16px;
+    height: 16px;
+    color: var(--text-muted);
+    transition: transform var(--transition-fast);
+    flex-shrink: 0;
+}
+
+.folder-toggle-arrow.collapsed {
+    transform: rotate(-90deg);
+}
+
+.folder-section-content {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 12px 0 4px 16px;
+    border-left: 2px solid var(--border-color);
+    margin-left: 9px;
+}
+
+.folder-section-content.hidden {
+    display: none;
 }
 
 .class-card {
@@ -1350,7 +1437,7 @@ body {
         padding: 24px;
     }
 
-    .classes-grid {
+    .classes-group {
         grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
     }
 }
