@@ -3,7 +3,9 @@ V_T_R - Video Transcriptor y Resumen
 Servidor Flask Principal
 """
 import os
+import time
 import logging
+import collections
 from pathlib import Path
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
@@ -18,6 +20,34 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# ──────────────────────────────────────────────────────────
+# Buffer de logs en memoria (solo sesión actual)
+# ──────────────────────────────────────────────────────────
+
+_log_buffer = collections.deque(maxlen=2000)
+
+
+class _MemoryLogHandler(logging.Handler):
+    """Captura logs en memoria para exponerlos vía /api/logs."""
+    def emit(self, record):
+        try:
+            if record.name == 'werkzeug':   # ignorar access logs HTTP
+                return
+            msg = record.getMessage()
+            _log_buffer.append({
+                "ts":  record.created,
+                "lvl": record.levelname[0],          # I / W / E / C
+                "src": record.name.split('.')[-1][:15],
+                "msg": msg[:400] if len(msg) > 400 else msg,
+            })
+        except Exception:
+            pass
+
+
+_mem_handler = _MemoryLogHandler()
+_mem_handler.setLevel(logging.DEBUG)
+logging.getLogger().addHandler(_mem_handler)
 
 # Inicializar Flask
 app = Flask(__name__, static_folder='static')
@@ -305,7 +335,9 @@ def process_video():
         file_manager.cleanup_temp_files(video_path, audio_path)
 
         # 8. Obtener información de la clase creada
-        class_info = file_manager.get_class_by_id(class_folder.name)
+        # Usar ruta relativa completa (no solo el nombre) para soportar subcarpetas
+        class_id = class_folder.relative_to(file_manager.clases_dir).as_posix()
+        class_info = file_manager.get_class_by_id(class_id)
         class_info["summary"] = summary
 
         logger.info(f"Procesamiento completado: {class_folder.name}")
@@ -327,6 +359,16 @@ def process_video():
             "error": str(e),
             "message": "Error al procesar el video"
         }), 500
+
+
+# ============== LOGS EN MEMORIA ==============
+
+@app.route('/api/logs', methods=['GET'])
+def get_logs():
+    """Devuelve los logs capturados en memoria desde el inicio de la sesión."""
+    since = request.args.get('since', 0.0, type=float)
+    entries = [e for e in _log_buffer if e['ts'] > since]
+    return jsonify({"logs": entries, "server_time": time.time()})
 
 
 # ============== RUTAS DE CHAT ==============

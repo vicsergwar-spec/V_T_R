@@ -31,6 +31,15 @@
                     </svg>
                     <span>Mis Clases</span>
                 </li>
+                <li class="nav-item" data-section="logs">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
+                        <line x1="9" y1="7" x2="15" y2="7"/>
+                        <line x1="9" y1="11" x2="15" y2="11"/>
+                        <line x1="9" y1="15" x2="12" y2="15"/>
+                    </svg>
+                    <span>Logs</span>
+                </li>
             </ul>
             <div class="system-status" id="systemStatus">
                 <div class="status-item">
@@ -163,6 +172,30 @@
                     </svg>
                     <h3>No hay clases procesadas</h3>
                     <p>Sube tu primer video para comenzar</p>
+                </div>
+            </section>
+
+            <!-- Sección: Logs -->
+            <section class="section" id="logs-section">
+                <div class="section-header">
+                    <h2>Logs del Sistema</h2>
+                    <p>Actividad del servidor en esta sesión (solo en memoria, se borra al reiniciar)</p>
+                </div>
+                <div class="logs-toolbar">
+                    <div class="log-periods">
+                        <button class="log-period-btn active" data-period="3600">1h</button>
+                        <button class="log-period-btn" data-period="7200">2h</button>
+                        <button class="log-period-btn" data-period="14400">4h</button>
+                        <button class="log-period-btn" data-period="86400">24h</button>
+                        <button class="log-period-btn" data-period="0">Todo</button>
+                    </div>
+                    <div class="logs-toolbar-right">
+                        <span class="logs-count" id="logsCount">0 entradas</span>
+                        <button class="btn-secondary btn-clear-logs" id="clearLogsBtn">Limpiar vista</button>
+                    </div>
+                </div>
+                <div class="logs-content" id="logsContent">
+                    <div class="logs-empty">Abre esta sección para ver logs en vivo...</div>
                 </div>
             </section>
 

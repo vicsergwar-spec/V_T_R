@@ -1542,3 +1542,91 @@ body {
         order: 3;
     }
 }
+
+/* ============================================
+   Visor de Logs
+   ============================================ */
+
+.logs-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.log-periods {
+    display: flex;
+    gap: 6px;
+}
+
+.log-period-btn {
+    padding: 5px 14px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.log-period-btn:hover {
+    border-color: var(--accent-primary);
+    color: var(--text-primary);
+}
+
+.log-period-btn.active {
+    background: var(--accent-primary);
+    border-color: var(--accent-primary);
+    color: #fff;
+}
+
+.logs-toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.logs-count {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.btn-clear-logs {
+    padding: 5px 14px;
+    font-size: 0.8rem;
+}
+
+.logs-content {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 12px 16px;
+    height: calc(100vh - 290px);
+    min-height: 400px;
+    overflow-y: auto;
+    font-family: 'Consolas', 'Fira Code', 'JetBrains Mono', monospace;
+    font-size: 0.76rem;
+    line-height: 1.6;
+}
+
+.log-line {
+    white-space: pre-wrap;
+    word-break: break-all;
+    padding: 0;
+}
+
+.log-info    { color: var(--text-secondary); }
+.log-warning { color: #f59e0b; }
+.log-error   { color: #ef4444; }
+
+.logs-empty {
+    color: var(--text-muted);
+    text-align: center;
+    padding: 48px 0;
+    font-family: inherit;
+    font-size: 0.9rem;
+}
