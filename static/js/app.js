@@ -79,12 +79,18 @@ const elements = {
     sendChatBtn: document.getElementById('sendChatBtn'),
     clearChatBtn: document.getElementById('clearChatBtn'),
 
-    // Modal
+    // Modal confirmar
     confirmModal: document.getElementById('confirmModal'),
     modalTitle: document.getElementById('modalTitle'),
     modalMessage: document.getElementById('modalMessage'),
     modalCancel: document.getElementById('modalCancel'),
     modalConfirm: document.getElementById('modalConfirm'),
+
+    // Modal renombrar
+    renameModal: document.getElementById('renameModal'),
+    renameInput: document.getElementById('renameInput'),
+    renameCancelBtn: document.getElementById('renameCancelBtn'),
+    renameConfirmBtn: document.getElementById('renameConfirmBtn'),
 
     // Toast
     toastContainer: document.getElementById('toastContainer')
@@ -100,6 +106,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initDetail();
     initChat();
     initModal();
+    initRenameModal();
     checkSystemStatus();
     loadClasses();
 });
@@ -491,6 +498,12 @@ function renderClassCard(cls) {
                     </svg>
                 </div>
                 <div class="class-card-actions">
+                    <button class="btn-icon rename" data-id="${escapeHtml(cls.id)}" data-name="${escapeHtml(cls.name.split(' · ')[0])}" title="Renombrar clase">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                        </svg>
+                    </button>
                     <button class="btn-icon delete" data-id="${escapeHtml(cls.id)}" title="Eliminar clase">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="3 6 5 6 21 6"/>
@@ -559,6 +572,13 @@ function attachClassCardListeners() {
         card.addEventListener('click', (e) => {
             if (e.target.closest('.btn-icon')) return;
             showClassDetail(card.dataset.id);
+        });
+    });
+
+    document.querySelectorAll('.class-card .btn-icon.rename').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            showRenameModal(btn.dataset.id, btn.dataset.name);
         });
     });
 
@@ -995,6 +1015,76 @@ async function deleteClass(classId) {
     } catch (error) {
         console.error('Error deleting class:', error);
         showToast('error', 'Error', 'No se pudo eliminar la clase');
+    }
+}
+
+// ============================================
+// Renombrar Clase
+// ============================================
+
+let renameClassId = null;
+
+function initRenameModal() {
+    elements.renameCancelBtn.addEventListener('click', () => {
+        elements.renameModal.classList.remove('active');
+        renameClassId = null;
+    });
+
+    elements.renameConfirmBtn.addEventListener('click', renameClass);
+
+    elements.renameInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') renameClass();
+        if (e.key === 'Escape') {
+            elements.renameModal.classList.remove('active');
+            renameClassId = null;
+        }
+    });
+
+    elements.renameModal.addEventListener('click', (e) => {
+        if (e.target === elements.renameModal) {
+            elements.renameModal.classList.remove('active');
+            renameClassId = null;
+        }
+    });
+}
+
+function showRenameModal(classId, currentName) {
+    renameClassId = classId;
+    elements.renameInput.value = currentName;
+    elements.renameModal.classList.add('active');
+    setTimeout(() => {
+        elements.renameInput.focus();
+        elements.renameInput.select();
+    }, 50);
+}
+
+async function renameClass() {
+    if (!renameClassId) return;
+    const newName = elements.renameInput.value.trim();
+    if (!newName) {
+        showToast('warning', 'Nombre inválido', 'El nombre no puede estar vacío');
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/classes/${renameClassId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: newName })
+        });
+        const data = await response.json();
+
+        if (response.ok) {
+            elements.renameModal.classList.remove('active');
+            renameClassId = null;
+            showToast('success', 'Clase renombrada', 'El nombre ha sido actualizado');
+            loadClasses();
+        } else {
+            throw new Error(data.error || 'Error al renombrar');
+        }
+    } catch (error) {
+        console.error('Error renaming class:', error);
+        showToast('error', 'Error', 'No se pudo renombrar la clase');
     }
 }
 
