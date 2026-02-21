@@ -156,6 +156,21 @@ def get_summary(class_id):
     })
 
 
+@app.route('/api/classes/<path:class_id>', methods=['PATCH'])
+def rename_class(class_id):
+    """Renombra una clase guardando el nuevo nombre en nombre.txt"""
+    data = request.get_json()
+    if not data or 'name' not in data:
+        return jsonify({"error": "Nombre requerido"}), 400
+    new_name = data['name'].strip()
+    if not new_name:
+        return jsonify({"error": "El nombre no puede estar vacío"}), 400
+    success = file_manager.rename_class(class_id, new_name)
+    if not success:
+        return jsonify({"error": "Clase no encontrada"}), 404
+    return jsonify({"success": True})
+
+
 @app.route('/api/classes/<path:class_id>', methods=['DELETE'])
 def delete_class(class_id):
     """Elimina una clase y libera su caché de Gemini si existe"""

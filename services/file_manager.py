@@ -285,6 +285,21 @@ class FileManager:
         logger.info(f"Carpeta de organización creada: {folder}")
         return {"path": rel_path, "name": safe_parts[-1], "depth": len(safe_parts) - 1}
 
+    def rename_class(self, class_id: str, new_name: str) -> bool:
+        """
+        Guarda un nombre personalizado para una clase en nombre.txt.
+        No mueve ni renombra la carpeta, preservando el ID y todos los archivos.
+        """
+        class_folder = self.clases_dir / class_id
+        if not class_folder.exists() or not class_folder.is_dir():
+            return False
+        new_name = new_name.strip()
+        if not new_name:
+            return False
+        (class_folder / "nombre.txt").write_text(new_name, encoding="utf-8")
+        logger.info(f"Clase renombrada: {class_id} → {new_name}")
+        return True
+
     # ──────────────────────────────────────────────────────────
     # Helpers internos
     # ──────────────────────────────────────────────────────────
@@ -321,6 +336,21 @@ class FileManager:
 
         class_id = relative_path if relative_path else base_name
         folder_path = "/".join(class_id.split("/")[:-1]) if "/" in class_id else ""
+
+        # Nombre personalizado si el usuario lo cambió
+        custom_name_path = folder / "nombre.txt"
+        if custom_name_path.exists():
+            custom = custom_name_path.read_text(encoding="utf-8").strip()
+            if custom:
+                if match:
+                    try:
+                        d = datetime.strptime(match.group(2), "%Y-%m-%d")
+                        time_part = match.group(3).replace("-", ":")
+                        display_name = f"{custom} · {d.strftime('%d/%m/%Y')} {time_part}"
+                    except ValueError:
+                        display_name = custom
+                else:
+                    display_name = custom
 
         return {
             "id": class_id,
