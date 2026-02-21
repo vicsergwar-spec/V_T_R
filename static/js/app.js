@@ -12,6 +12,7 @@ const state = {
     currentClass: null,
     currentTranscriptionSegments: null,
     classes: [],
+    collapsedFolders: new Set(),
     selectedFile: null,
     isProcessing: false,
     chatHistory: [],
@@ -444,8 +445,44 @@ function renderClasses() {
 
     elements.emptyClasses.style.display = 'none';
 
-    elements.classesGrid.innerHTML = state.classes.map(cls => `
-        <div class="class-card" data-id="${cls.id}">
+    const tree = buildFolderTree(state.classes);
+    elements.classesGrid.innerHTML = renderFolderNode(tree, 0);
+    attachClassCardListeners();
+}
+
+function buildFolderTree(classes) {
+    const root = { classes: [], children: {}, path: '', name: '' };
+    for (const cls of classes) {
+        const folderPath = cls.folder_path || '';
+        if (!folderPath) {
+            root.classes.push(cls);
+        } else {
+            const parts = folderPath.split('/');
+            let node = root;
+            let currentPath = '';
+            for (const part of parts) {
+                currentPath = currentPath ? currentPath + '/' + part : part;
+                if (!node.children[part]) {
+                    node.children[part] = { classes: [], children: {}, path: currentPath, name: part };
+                }
+                node = node.children[part];
+            }
+            node.classes.push(cls);
+        }
+    }
+    return root;
+}
+
+function countClasses(node) {
+    let count = node.classes.length;
+    for (const child of Object.values(node.children)) {
+        count += countClasses(child);
+    }
+    return count;
+}
+
+function renderClassCard(cls) {
+    return `<div class="class-card" data-id="${escapeHtml(cls.id)}">
             <div class="class-card-header">
                 <div class="class-card-icon">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -454,7 +491,7 @@ function renderClasses() {
                     </svg>
                 </div>
                 <div class="class-card-actions">
-                    <button class="btn-icon delete" data-id="${cls.id}" title="Eliminar clase">
+                    <button class="btn-icon delete" data-id="${escapeHtml(cls.id)}" title="Eliminar clase">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="3 6 5 6 21 6"/>
                             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -462,7 +499,6 @@ function renderClasses() {
                     </button>
                 </div>
             </div>
-            ${cls.folder_path ? `<div class="class-folder-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>${escapeHtml(cls.folder_path.replace(/\//g, ' / '))}</div>` : ''}
             <h3 class="class-card-title">${escapeHtml(cls.name)}</h3>
             <div class="class-card-date">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -471,7 +507,7 @@ function renderClasses() {
                     <line x1="8" y1="2" x2="8" y2="6"/>
                     <line x1="3" y1="10" x2="21" y2="10"/>
                 </svg>
-                <span>${cls.created_at_formatted}</span>
+                <span>${escapeHtml(cls.created_at_formatted)}</span>
             </div>
             <div class="class-card-stats">
                 <div class="stat">
@@ -481,23 +517,73 @@ function renderClasses() {
                     <span>${cls.segment_count} segmentos</span>
                 </div>
             </div>
-        </div>
-    `).join('');
+        </div>`;
+}
 
-    // Event listeners para tarjetas
+function renderFolderNode(node, depth) {
+    let html = '';
+
+    // Clases sin carpeta (solo en la raíz)
+    if (depth === 0 && node.classes.length > 0) {
+        html += '<div class="classes-group">' + node.classes.map(renderClassCard).join('') + '</div>';
+    }
+
+    // Secciones de carpeta
+    const sortedChildren = Object.entries(node.children).sort(([a], [b]) => a.localeCompare(b));
+    for (const [, childNode] of sortedChildren) {
+        const total = countClasses(childNode);
+        const folderId = 'folder-' + childNode.path.replace(/[^a-zA-Z0-9]/g, '-');
+        const isCollapsed = state.collapsedFolders.has(childNode.path);
+
+        html += `<div class="folder-section" data-depth="${depth}">
+<div class="folder-section-header" data-folderid="${folderId}" data-folderpath="${escapeHtml(childNode.path)}">
+    <div class="folder-section-left">
+        <svg class="folder-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        <span class="folder-section-name">${escapeHtml(childNode.name)}</span>
+        <span class="folder-class-count">${total}</span>
+    </div>
+    <svg class="folder-toggle-arrow${isCollapsed ? ' collapsed' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+</div>
+<div class="folder-section-content${isCollapsed ? ' hidden' : ''}" id="${folderId}">
+    ${childNode.classes.length > 0 ? '<div class="classes-group">' + childNode.classes.map(renderClassCard).join('') + '</div>' : ''}
+    ${renderFolderNode(childNode, depth + 1)}
+</div>
+</div>`;
+    }
+
+    return html;
+}
+
+function attachClassCardListeners() {
     document.querySelectorAll('.class-card').forEach(card => {
         card.addEventListener('click', (e) => {
-            // Ignorar si se hizo clic en el botón de eliminar
             if (e.target.closest('.btn-icon')) return;
             showClassDetail(card.dataset.id);
         });
     });
 
-    // Event listeners para eliminar
     document.querySelectorAll('.class-card .btn-icon.delete').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
             confirmDeleteClass(btn.dataset.id);
+        });
+    });
+
+    document.querySelectorAll('.folder-section-header').forEach(header => {
+        header.addEventListener('click', () => {
+            const folderId = header.dataset.folderid;
+            const folderPath = header.dataset.folderpath;
+            const content = document.getElementById(folderId);
+            const arrow = header.querySelector('.folder-toggle-arrow');
+            if (content.classList.contains('hidden')) {
+                content.classList.remove('hidden');
+                arrow.classList.remove('collapsed');
+                state.collapsedFolders.delete(folderPath);
+            } else {
+                content.classList.add('hidden');
+                arrow.classList.add('collapsed');
+                state.collapsedFolders.add(folderPath);
+            }
         });
     });
 }
