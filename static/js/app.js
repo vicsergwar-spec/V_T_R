@@ -92,6 +92,11 @@ const elements = {
     renameCancelBtn: document.getElementById('renameCancelBtn'),
     renameConfirmBtn: document.getElementById('renameConfirmBtn'),
 
+    // Logs
+    logsContent: document.getElementById('logsContent'),
+    logsCount: document.getElementById('logsCount'),
+    clearLogsBtn: document.getElementById('clearLogsBtn'),
+
     // Toast
     toastContainer: document.getElementById('toastContainer')
 };
@@ -107,6 +112,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initChat();
     initModal();
     initRenameModal();
+    initLogs();
     checkSystemStatus();
     loadClasses();
 });
@@ -145,6 +151,13 @@ function navigateTo(section) {
     // Recargar clases si navegamos a esa sección
     if (section === 'classes') {
         loadClasses();
+    }
+
+    // Logs: iniciar/detener polling
+    if (section === 'logs') {
+        startLogsPolling();
+    } else {
+        stopLogsPolling();
     }
 }
 
@@ -1229,4 +1242,92 @@ function processInline(text) {
         .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
         .replace(/\*(.*?)\*/g, '<em>$1</em>')
         .replace(/`(.*?)`/g, '<code>$1</code>');
+}
+
+// ============================================
+// Visor de Logs
+// ============================================
+
+const logsState = {
+    allLogs: [],
+    lastServerTime: 0,
+    interval: null,
+    period: 3600   // segundos; 0 = todo
+};
+
+function initLogs() {
+    document.querySelectorAll('.log-period-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.log-period-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            logsState.period = parseInt(btn.dataset.period, 10);
+            renderLogs();
+        });
+    });
+
+    elements.clearLogsBtn.addEventListener('click', () => {
+        logsState.allLogs = [];
+        logsState.lastServerTime = Date.now() / 1000;
+        renderLogs();
+    });
+}
+
+function startLogsPolling() {
+    fetchLogs();
+    logsState.interval = setInterval(fetchLogs, 3000);
+}
+
+function stopLogsPolling() {
+    if (logsState.interval) {
+        clearInterval(logsState.interval);
+        logsState.interval = null;
+    }
+}
+
+async function fetchLogs() {
+    try {
+        const response = await fetch(`/api/logs?since=${logsState.lastServerTime}`);
+        const data = await response.json();
+        if (data.logs && data.logs.length > 0) {
+            logsState.allLogs.push(...data.logs);
+            if (logsState.allLogs.length > 2000) {
+                logsState.allLogs = logsState.allLogs.slice(-2000);
+            }
+        }
+        if (data.server_time) {
+            logsState.lastServerTime = data.server_time;
+        }
+        renderLogs();
+    } catch (_) {
+        // servidor ocupado, reintentar en próximo ciclo
+    }
+}
+
+function renderLogs() {
+    const container = elements.logsContent;
+    const now = Date.now() / 1000;
+    const cutoff = logsState.period === 0 ? 0 : now - logsState.period;
+    const filtered = logsState.allLogs.filter(e => e.ts >= cutoff);
+
+    elements.logsCount.textContent = `${filtered.length} entradas`;
+
+    if (filtered.length === 0) {
+        container.innerHTML = '<div class="logs-empty">Sin logs en este período</div>';
+        return;
+    }
+
+    const wasAtBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 20;
+
+    container.innerHTML = filtered.map(e => {
+        const d = new Date(e.ts * 1000);
+        const t = d.toTimeString().slice(0, 8);
+        const cls = e.lvl === 'E' || e.lvl === 'C' ? 'log-error'
+                  : e.lvl === 'W' ? 'log-warning'
+                  : 'log-info';
+        return `<div class="log-line ${cls}">[${t}][${e.lvl}][${escapeHtml(e.src)}] ${escapeHtml(e.msg)}</div>`;
+    }).join('');
+
+    if (wasAtBottom) {
+        container.scrollTop = container.scrollHeight;
+    }
 }
