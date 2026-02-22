@@ -312,7 +312,7 @@ def process_video():
                 "message": "Error al transcribir el audio"
             }
             # Si falló un modelo local y OpenAI está disponible, ofrecer la opción al usuario
-            if whisper_model in ("small", "medium") and config.OPENAI_API_KEY:
+            if whisper_model != "openai" and config.OPENAI_API_KEY:
                 error_response["gpu_failed"] = True
                 error_response["openai_available"] = True
             return jsonify(error_response), 500

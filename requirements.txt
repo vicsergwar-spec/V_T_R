@@ -11,9 +11,9 @@ google-generativeai>=0.7.0  # 0.7+ incluye la API de Context Caching
 # OpenAI (opcional, para Whisper API como respaldo)
 openai>=1.12.0
 
-# Whisper para transcripción local
-# Nota: Instalar con pip install openai-whisper
-openai-whisper>=20231117
+# Whisper para transcripción local (motor optimizado con CTranslate2)
+# Nota: Instalar con pip install faster-whisper
+faster-whisper>=1.0.0
 
 # PyTorch con CUDA - Instalar manualmente con:
 # pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121

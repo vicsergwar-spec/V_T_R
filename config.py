@@ -23,17 +23,23 @@ TEMP_DIR.mkdir(exist_ok=True)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# Configuración de Whisper
+# Configuración de faster-whisper
+# VRAM estimado con cuantización automática (float16 en GPU para small/medium, int8_float16 para large-v3)
 WHISPER_MODELS = {
     "small": {
         "name": "small",
-        "description": "Modelo pequeño - Recomendado para 6GB VRAM",
-        "vram_required": "~2GB"
+        "description": "Modelo pequeño - Rápido, ~1-2GB VRAM",
+        "vram_required": "~1-2GB"
     },
     "medium": {
         "name": "medium",
-        "description": "Modelo mediano - Requiere más VRAM",
-        "vram_required": "~5GB"
+        "description": "Modelo mediano - Recomendado, calidad/velocidad óptima, ~3GB VRAM",
+        "vram_required": "~3GB"
+    },
+    "large-v3": {
+        "name": "large-v3",
+        "description": "Modelo grande - Máxima calidad (experimental), ~4-5GB VRAM",
+        "vram_required": "~4-5GB"
     },
     "openai": {
         "name": "openai",
@@ -41,7 +47,7 @@ WHISPER_MODELS = {
         "vram_required": "N/A"
     }
 }
-DEFAULT_WHISPER_MODEL = "small"
+DEFAULT_WHISPER_MODEL = "medium"
 
 # Configuración de Gemini
 # Para cambiar de modelo: pon aquí el ID exacto que ves en Google AI Studio

@@ -1,5 +1,5 @@
 """
-Servicio de transcripción usando Whisper (local con CUDA) y OpenAI API como respaldo
+Servicio de transcripción usando faster-whisper (local con CUDA) y OpenAI API como respaldo
 """
 import json
 import logging
@@ -14,32 +14,39 @@ try:
     TORCH_AVAILABLE = True
 except ImportError:
     TORCH_AVAILABLE = False
-    logger.warning("PyTorch no está instalado. La transcripción local no estará disponible.")
+    logger.warning("PyTorch no está instalado. La información de GPU estará limitada.")
 
 
 class Transcriber:
-    """Transcribe audio usando Whisper local (CUDA) o OpenAI Whisper API"""
+    """Transcribe audio usando faster-whisper local (CUDA) o OpenAI Whisper API"""
 
-    def __init__(self, model_name: str = "small", openai_api_key: Optional[str] = None):
+    # Compute type por modelo y dispositivo.
+    # float16    → máxima velocidad en GPU, calidad completa (requiere más VRAM)
+    # int8_float16 → mitad de VRAM que float16, calidad casi idéntica (ideal para large-v3)
+    # int8       → mínima VRAM, ideal para CPU
+    _COMPUTE_TYPES = {
+        "small":    {"cuda": "float16",       "cpu": "int8"},
+        "medium":   {"cuda": "float16",       "cpu": "int8"},
+        "large-v3": {"cuda": "int8_float16",  "cpu": "int8"},
+    }
+
+    def __init__(self, model_name: str = "medium", openai_api_key: Optional[str] = None):
         """
         Inicializa el transcriptor.
 
         Args:
-            model_name: Nombre del modelo Whisper ("small" o "medium")
+            model_name: Nombre del modelo faster-whisper ("small", "medium", "large-v3")
             openai_api_key: API key de OpenAI para respaldo (opcional)
         """
         self.model_name = model_name
         self.openai_api_key = openai_api_key
         self.model = None
         self.device = self._get_device()
+        self.compute_type = self._get_compute_type()
 
     def _get_device(self) -> str:
         """Determina el dispositivo a usar (CUDA o CPU)"""
-        if not TORCH_AVAILABLE:
-            logger.warning("PyTorch no disponible. Se usará API de OpenAI como respaldo.")
-            return "cpu"
-
-        if torch.cuda.is_available():
+        if TORCH_AVAILABLE and torch.cuda.is_available():
             gpu_name = torch.cuda.get_device_name(0)
             gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
             logger.info(f"GPU detectada: {gpu_name} ({gpu_memory:.1f} GB)")
@@ -48,26 +55,31 @@ class Transcriber:
             logger.warning("CUDA no disponible. Usando CPU (será más lento)")
             return "cpu"
 
+    def _get_compute_type(self) -> str:
+        """Determina el compute_type óptimo para faster-whisper según modelo y dispositivo"""
+        types = self._COMPUTE_TYPES.get(self.model_name, {"cuda": "float16", "cpu": "int8"})
+        return types[self.device]
+
     def load_model(self) -> None:
-        """Carga el modelo Whisper en memoria"""
+        """Carga el modelo faster-whisper en memoria"""
         if self.model is not None:
             return
 
-        if not TORCH_AVAILABLE:
-            raise RuntimeError(
-                "PyTorch no está instalado. Instálalo con: "
-                "pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121"
-            )
-
-        logger.info(f"Cargando modelo Whisper '{self.model_name}' en {self.device}...")
+        logger.info(
+            f"Cargando modelo faster-whisper '{self.model_name}' "
+            f"en {self.device} ({self.compute_type})..."
+        )
 
         try:
-            import whisper
-            self.model = whisper.load_model(self.model_name, device=self.device)
-            logger.info(f"Modelo cargado exitosamente en {self.model.device}")
-            self._warmup()
+            from faster_whisper import WhisperModel
+            self.model = WhisperModel(
+                self.model_name,
+                device=self.device,
+                compute_type=self.compute_type,
+            )
+            logger.info("Modelo faster-whisper cargado exitosamente")
         except Exception as e:
-            logger.error(f"Error al cargar modelo Whisper: {e}")
+            logger.error(f"Error al cargar modelo faster-whisper: {e}")
             raise
 
     def transcribe_local(
@@ -77,7 +89,7 @@ class Transcriber:
         progress_callback: callable = None
     ) -> dict:
         """
-        Transcribe audio usando Whisper local.
+        Transcribe audio usando faster-whisper local.
 
         Args:
             audio_path: Ruta al archivo de audio WAV
@@ -95,55 +107,42 @@ class Transcriber:
             progress_callback("Iniciando transcripción...")
 
         try:
-            # Transcribir con Whisper
-            use_fp16 = (self.device == "cuda")
-            try:
-                result = self.model.transcribe(
-                    audio_path,
-                    language=language,
-                    task="transcribe",
-                    verbose=False,
-                    fp16=use_fp16,
-                    word_timestamps=False
-                )
-            except (RuntimeError, ValueError) as fp16_error:
-                error_msg = str(fp16_error).lower()
-                if use_fp16 and ("nan" in error_msg or "invalid values" in error_msg):
-                    logger.warning(
-                        "fp16 produjo NaN en GPU — reintentando con fp32 (más lento pero estable)..."
-                    )
-                    result = self.model.transcribe(
-                        audio_path,
-                        language=language,
-                        task="transcribe",
-                        verbose=False,
-                        fp16=False,
-                        word_timestamps=False
-                    )
-                else:
-                    raise
+            # faster-whisper devuelve un generador de segmentos e información del audio
+            segments_gen, info = self.model.transcribe(
+                audio_path,
+                language=language,
+                task="transcribe",
+                beam_size=5,
+                vad_filter=True,   # filtra silencios automáticamente
+            )
 
-            # Procesar segmentos
-            raw_segments = result.get("segments", [])
+            # Convertir el generador a lista procesando cada segmento
             segments = []
-            for segment in raw_segments:
+            full_text_parts = []
+            last_end = 0.0
+
+            for segment in segments_gen:
                 # avg_logprob va de ~-1 (baja confianza) a 0 (alta confianza)
                 # Normalizamos a rango 0.0 - 1.0
-                confianza = max(0.0, min(1.0, round(segment.get("avg_logprob", 0) + 1, 2)))
+                confianza = max(0.0, min(1.0, round(segment.avg_logprob + 1, 2)))
                 segments.append({
-                    "timestamp_inicio": self._format_timestamp(segment["start"]),
-                    "timestamp_fin": self._format_timestamp(segment["end"]),
-                    "texto": segment["text"].strip(),
-                    "confianza": confianza
+                    "timestamp_inicio": self._format_timestamp(segment.start),
+                    "timestamp_fin":    self._format_timestamp(segment.end),
+                    "texto":            segment.text.strip(),
+                    "confianza":        confianza,
                 })
+                full_text_parts.append(segment.text.strip())
+                last_end = segment.end
+
+            full_text = " ".join(full_text_parts)
 
             logger.info(f"Transcripción completada: {len(segments)} segmentos")
 
             return {
-                "text": result["text"],
+                "text":     full_text,
                 "segments": segments,
-                "language": result.get("language", language),
-                "duration": raw_segments[-1]["end"] if raw_segments else 0.0
+                "language": info.language,
+                "duration": last_end,
             }
 
         except Exception as e:
@@ -193,16 +192,16 @@ class Transcriber:
                 confianza = max(0.0, min(1.0, round(getattr(segment, "avg_logprob", 0) + 1, 2)))
                 segments.append({
                     "timestamp_inicio": self._format_timestamp(segment.start),
-                    "timestamp_fin": self._format_timestamp(segment.end),
-                    "texto": segment.text.strip(),
-                    "confianza": confianza
+                    "timestamp_fin":    self._format_timestamp(segment.end),
+                    "texto":            segment.text.strip(),
+                    "confianza":        confianza,
                 })
 
             return {
-                "text": response.text,
+                "text":     response.text,
                 "segments": segments,
                 "language": "es",
-                "duration": raw_segments[-1].end if raw_segments else 0.0
+                "duration": raw_segments[-1].end if raw_segments else 0.0,
             }
 
         except Exception as e:
@@ -218,7 +217,7 @@ class Transcriber:
         Transcribe audio usando el modelo configurado.
 
         Si model_name es 'openai', usa la API de OpenAI directamente.
-        Si es un modelo local ('small'/'medium') y falla, lanza la excepción
+        Si es un modelo local ('small', 'medium', 'large-v3') y falla, lanza la excepción
         sin hacer fallback automático a OpenAI.
 
         Args:
@@ -291,23 +290,6 @@ class Transcriber:
         secs = seconds % 60
         return f"{hours:02d}:{minutes:02d}:{secs:06.3f}"
 
-    def _warmup(self) -> None:
-        """Ejecuta una inferencia corta para inicializar los kernels CUDA antes de la transcripción real"""
-        if self.device != "cuda" or self.model is None:
-            return
-        try:
-            import numpy as np
-            import whisper as _whisper
-            logger.info("Calentando GPU (warmup)...")
-            dummy = np.zeros(16000, dtype=np.float32)  # 1 segundo de silencio a 16kHz
-            audio = _whisper.pad_or_trim(dummy)
-            mel = _whisper.log_mel_spectrogram(audio).to(self.device)
-            with torch.no_grad():
-                self.model.encoder(mel.unsqueeze(0))
-            logger.info("GPU calentada correctamente")
-        except Exception as e:
-            logger.warning(f"Warmup fallido (no crítico): {e}")
-
     def get_gpu_info(self) -> dict:
         """Obtiene información sobre la GPU disponible"""
         if TORCH_AVAILABLE and torch.cuda.is_available():
@@ -315,9 +297,9 @@ class Transcriber:
                 "available": True,
                 "device": self.device,
                 "name": torch.cuda.get_device_name(0),
-                "memory_total_gb": torch.cuda.get_device_properties(0).total_memory / (1024**3),
+                "memory_total_gb":     torch.cuda.get_device_properties(0).total_memory / (1024**3),
                 "memory_allocated_gb": torch.cuda.memory_allocated(0) / (1024**3),
-                "memory_cached_gb": torch.cuda.memory_reserved(0) / (1024**3)
+                "memory_cached_gb":    torch.cuda.memory_reserved(0) / (1024**3),
             }
         return {"available": False, "device": "cpu"}
 
@@ -328,4 +310,4 @@ class Transcriber:
             self.model = None
             if TORCH_AVAILABLE and torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            logger.info("Modelo Whisper descargado de memoria")
+            logger.info("Modelo faster-whisper descargado de memoria")
