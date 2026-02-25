@@ -5,10 +5,12 @@ from .audio_extractor import AudioExtractor
 from .transcriber import Transcriber
 from .gemini_service import GeminiService
 from .file_manager import FileManager
+from .slide_extractor import SlideExtractor
 
 __all__ = [
     "AudioExtractor",
     "Transcriber",
     "GeminiService",
-    "FileManager"
+    "FileManager",
+    "SlideExtractor",
 ]

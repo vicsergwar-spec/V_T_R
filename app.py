@@ -12,7 +12,7 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
 import config
-from services import AudioExtractor, Transcriber, GeminiService, FileManager
+from services import AudioExtractor, Transcriber, GeminiService, FileManager, SlideExtractor
 
 # Configurar logging
 logging.basicConfig(
@@ -77,6 +77,18 @@ if config.GEMINI_API_KEY:
     except Exception as e:
         logger.error(f"Error inicializando Gemini: {e}")
 
+# SlideExtractor se inicializa si hay GOOGLE_VISION_API_KEY y está habilitado
+slide_extractor = None
+if config.GOOGLE_VISION_API_KEY and config.SLIDE_EXTRACTION_ENABLED:
+    try:
+        slide_extractor = SlideExtractor(
+            vision_api_key=config.GOOGLE_VISION_API_KEY,
+            gemini_api_key=config.GEMINI_API_KEY or None,
+        )
+        logger.info("SlideExtractor listo (Cloud Vision + Gemini Vision)")
+    except Exception as e:
+        logger.error(f"Error inicializando SlideExtractor: {e}")
+
 
 def get_transcriber(model_name: str = None) -> Transcriber:
     """Obtiene o crea una instancia del transcriber"""
@@ -127,6 +139,7 @@ def get_status():
         "status": "ok",
         "gemini_configured": gemini_service is not None,
         "openai_configured": config.OPENAI_API_KEY is not None,
+        "vision_configured": slide_extractor is not None,
         "gpu_available": gpu_available,
         "gpu_info": gpu_info,
         "whisper_models": list(config.WHISPER_MODELS.keys()),
@@ -317,17 +330,40 @@ def process_video():
                 error_response["openai_available"] = True
             return jsonify(error_response), 500
 
-        # 4. Generar nombre de carpeta
+        # 3.5. Extraer contenido de slides (opcional, requiere GOOGLE_VISION_API_KEY)
+        slides_markdown = ""
+        if slide_extractor:
+            try:
+                logger.info("Extrayendo contenido de slides del video...")
+                slides = slide_extractor.extract_slides(
+                    video_path=video_path,
+                    temp_dir=str(config.TEMP_DIR),
+                )
+                slides_markdown = slide_extractor.format_slides_for_context(slides)
+                if slides_markdown:
+                    logger.info(f"Slides extraídos: {len(slides)} slides con contenido")
+                else:
+                    logger.info("No se encontró contenido en los slides del video")
+            except Exception as e:
+                logger.warning(f"Error extrayendo slides (continuando sin slides): {e}")
+
+        # 4. Generar nombre de carpeta (usar texto enriquecido si hay slides)
         logger.info("Generando nombre de carpeta...")
-        folder_name = gemini_service.generate_folder_name(result["text"])
+        context_for_naming = result["text"] + (slides_markdown[:2000] if slides_markdown else "")
+        folder_name = gemini_service.generate_folder_name(context_for_naming)
 
         # 5. Crear carpeta y guardar transcripción
         class_folder = file_manager.create_class_folder(folder_name, parent_path=folder_path)
         file_manager.save_transcription(result["segments"], class_folder)
 
-        # 6. Generar y guardar resumen
+        # 5.5. Guardar slides si se extrajeron
+        if slides_markdown:
+            file_manager.save_slides(slides_markdown, class_folder)
+
+        # 6. Generar y guardar resumen (transcripción + slides combinados)
         logger.info("Generando resumen...")
-        summary = gemini_service.generate_summary(result["text"], folder_name)
+        full_context = result["text"] + slides_markdown
+        summary = gemini_service.generate_summary(full_context, folder_name)
         file_manager.save_summary(summary, class_folder)
 
         # 7. Limpiar archivos temporales
@@ -383,12 +419,16 @@ def start_chat(class_id):
     if not transcription_text:
         return jsonify({"error": "No se encontró la transcripción"}), 404
 
+    # Enriquecer con contenido de slides si existe
+    slides_content = file_manager.get_slides(class_id) or ""
+    full_context = transcription_text + slides_content
+
     # Restaurar historial y nombre de caché desde disco
     saved_history = file_manager.get_chat_history(class_id) or []
     saved_cache_name = file_manager.get_cache_name(class_id)
 
     new_cache_name = gemini_service.start_chat_session(
-        class_id, transcription_text,
+        class_id, full_context,
         history=saved_history,
         cached_content_name=saved_cache_name,
     )
@@ -428,10 +468,12 @@ def send_chat_message(class_id):
             transcription_text = file_manager.get_transcription_text(class_id)
             if not transcription_text:
                 return jsonify({"error": "No se encontró la transcripción"}), 404
+            slides_content = file_manager.get_slides(class_id) or ""
+            full_context = transcription_text + slides_content
             saved_history = file_manager.get_chat_history(class_id) or []
             saved_cache_name = file_manager.get_cache_name(class_id)
             new_cache_name = gemini_service.start_chat_session(
-                class_id, transcription_text,
+                class_id, full_context,
                 history=saved_history,
                 cached_content_name=saved_cache_name,
             )
