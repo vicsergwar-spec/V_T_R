@@ -568,6 +568,123 @@ body {
 }
 
 /* Barra de progreso */
+/* ============================================
+   Cola de videos
+   ============================================ */
+
+.queue-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 14px;
+    max-height: 260px;
+    overflow-y: auto;
+}
+
+.queue-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    transition: border-color var(--transition-fast);
+}
+
+.queue-item.processing {
+    border-color: var(--accent-primary);
+    background: rgba(99, 102, 241, 0.06);
+}
+
+.queue-item.done {
+    border-color: var(--success);
+    opacity: 0.65;
+}
+
+.queue-item.error {
+    border-color: var(--error);
+    background: var(--error-bg);
+}
+
+.queue-item-icon {
+    font-size: 16px;
+    flex-shrink: 0;
+    width: 22px;
+    text-align: center;
+}
+
+.queue-item-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.queue-item-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.queue-item-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.queue-item-meta .status-pending  { color: var(--text-muted); }
+.queue-item-meta .status-processing { color: var(--accent-secondary); font-weight: 600; }
+.queue-item-meta .status-done     { color: var(--success); font-weight: 600; }
+.queue-item-meta .status-error    { color: var(--error); font-weight: 600; }
+
+.queue-remove {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    padding: 4px;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    transition: color var(--transition-fast);
+}
+
+.queue-remove:hover { color: var(--error); }
+
+/* Fila de checkbox apagado */
+.shutdown-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 14px 0 4px;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.shutdown-row input[type=checkbox] {
+    width: 15px;
+    height: 15px;
+    accent-color: var(--accent-primary);
+    cursor: pointer;
+}
+
+.shutdown-row label {
+    cursor: pointer;
+    user-select: none;
+}
+
+/* Contador de cola en la barra de progreso */
+.queue-counter {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent-light);
+    letter-spacing: 0.03em;
+    margin-bottom: 10px;
+}
+
 .progress-container {
     margin-top: 24px;
     background: var(--bg-card);
