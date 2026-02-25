@@ -261,9 +261,8 @@ def create_folder():
 @app.route('/api/process', methods=['POST'])
 def process_video():
     """
-    Procesa un video: extrae audio, transcribe, genera nombre y resumen
+    Procesa un video: extrae audio, transcribe, extrae slides y genera resumen
     """
-    # Verificar que hay archivo
     if 'video' not in request.files:
         return jsonify({"error": "No se proporcionó archivo de video"}), 400
 
@@ -272,7 +271,6 @@ def process_video():
     if video_file.filename == '':
         return jsonify({"error": "Nombre de archivo vacío"}), 400
 
-    # Verificar extensión
     filename = secure_filename(video_file.filename)
     ext = Path(filename).suffix.lower()
 
@@ -282,19 +280,15 @@ def process_video():
             "supported": config.SUPPORTED_VIDEO_FORMATS
         }), 400
 
-    # Verificar Gemini
     if not gemini_service:
         return jsonify({"error": "Gemini API no está configurado"}), 500
 
-    # Obtener modelo de Whisper
     whisper_model = request.form.get('model', config.DEFAULT_WHISPER_MODEL)
     if whisper_model not in config.WHISPER_MODELS:
         whisper_model = config.DEFAULT_WHISPER_MODEL
 
-    # Carpeta destino (opcional)
     folder_path = request.form.get('folder_path', '').strip()
 
-    # Verificar que si se usa OpenAI, la key esté disponible
     if whisper_model == "openai" and not config.OPENAI_API_KEY:
         return jsonify({"error": "Se seleccionó OpenAI API pero OPENAI_API_KEY no está configurada en el servidor"}), 400
 
@@ -310,7 +304,7 @@ def process_video():
         logger.info("Extrayendo audio...")
         audio_path = audio_extractor.extract_audio(video_path)
 
-        # 3. Transcribir
+        # 3. Transcribir (proceso más pesado)
         logger.info(f"Transcribiendo con modelo {whisper_model}...")
         trans = get_transcriber(whisper_model)
         try:
@@ -324,13 +318,12 @@ def process_video():
                 "error": str(transcribe_error),
                 "message": "Error al transcribir el audio"
             }
-            # Si falló un modelo local y OpenAI está disponible, ofrecer la opción al usuario
             if whisper_model != "openai" and config.OPENAI_API_KEY:
                 error_response["gpu_failed"] = True
                 error_response["openai_available"] = True
             return jsonify(error_response), 500
 
-        # 3.5. Extraer contenido de slides (opcional, requiere GOOGLE_VISION_API_KEY)
+        # 4. Extraer contenido de slides (proceso medio, requiere GOOGLE_VISION_API_KEY)
         slides_markdown = ""
         if slide_extractor:
             try:
@@ -347,37 +340,32 @@ def process_video():
             except Exception as e:
                 logger.warning(f"Error extrayendo slides (continuando sin slides): {e}")
 
-        # 4. Generar nombre de carpeta (usar texto enriquecido si hay slides)
+        # 5. Generar nombre de carpeta
         logger.info("Generando nombre de carpeta...")
         context_for_naming = result["text"] + (slides_markdown[:2000] if slides_markdown else "")
         folder_name = gemini_service.generate_folder_name(context_for_naming)
 
-        # 5. Crear carpeta y guardar transcripción
+        # 6. Crear carpeta y guardar archivos
         class_folder = file_manager.create_class_folder(folder_name, parent_path=folder_path)
         file_manager.save_transcription(result["segments"], class_folder)
-
-        # 5.5. Guardar slides si se extrajeron
         if slides_markdown:
             file_manager.save_slides(slides_markdown, class_folder)
 
-        # 6. Generar y guardar resumen (transcripción + slides combinados)
-        logger.info("Generando resumen...")
+        # 7. Generar resumen con transcripción + slides (proceso ligero)
+        logger.info("Generando resumen con toda la información...")
         full_context = result["text"] + slides_markdown
         summary = gemini_service.generate_summary(full_context, folder_name)
         file_manager.save_summary(summary, class_folder)
 
-        # 7. Limpiar archivos temporales
+        # 8. Limpiar archivos temporales
         logger.info("Limpiando archivos temporales...")
         file_manager.cleanup_temp_files(video_path, audio_path)
 
-        # 8. Obtener información de la clase creada
-        # Usar ruta relativa completa (no solo el nombre) para soportar subcarpetas
         class_id = class_folder.relative_to(file_manager.clases_dir).as_posix()
         class_info = file_manager.get_class_by_id(class_id)
         class_info["summary"] = summary
 
         logger.info(f"Procesamiento completado: {class_folder.name}")
-
         return jsonify({
             "success": True,
             "message": "Video procesado exitosamente",
@@ -386,11 +374,8 @@ def process_video():
 
     except Exception as e:
         logger.error(f"Error procesando video: {e}")
-
-        # Limpiar archivos temporales en caso de error
         if video_path:
             file_manager.cleanup_temp_files(video_path, audio_path)
-
         return jsonify({
             "error": str(e),
             "message": "Error al procesar el video"
