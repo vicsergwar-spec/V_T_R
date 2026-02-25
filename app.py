@@ -201,6 +201,15 @@ def get_transcription(class_id):
     })
 
 
+@app.route('/api/classes/<path:class_id>/slides', methods=['GET'])
+def get_slides_content(class_id):
+    """Devuelve el contenido de slides (slides.md) como texto para renderizar en el frontend."""
+    content = file_manager.get_slides(class_id)
+    if content is None:
+        return jsonify({"error": "No hay slides para esta clase"}), 404
+    return jsonify({"class_id": class_id, "content": content})
+
+
 @app.route('/api/classes/<path:class_id>/summary', methods=['GET'])
 def get_summary(class_id):
     """Obtiene el resumen de una clase"""

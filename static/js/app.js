@@ -63,6 +63,11 @@ const elements = {
     transcriptionContent: document.getElementById('transcriptionContent'),
     transcriptionCount: document.getElementById('transcriptionCount'),
     downloadTranscriptionBtn: document.getElementById('downloadTranscriptionBtn'),
+    slidesBtnTab: document.getElementById('tab-btn-slides'),
+    slidesContent: document.getElementById('slidesContent'),
+    slidesCount: document.getElementById('slidesCount'),
+    downloadSlidesMdBtn: document.getElementById('downloadSlidesMdBtn'),
+    downloadSlidesPdfBtn: document.getElementById('downloadSlidesPdfBtn'),
 
     // Carpetas
     folderSelect: document.getElementById('folderSelect'),
@@ -825,6 +830,10 @@ function initDetail() {
 
     // Botón descargar transcripción
     elements.downloadTranscriptionBtn.addEventListener('click', downloadTranscription);
+
+    // Botones descargar slides
+    elements.downloadSlidesMdBtn.addEventListener('click',  () => downloadSlides('markdown'));
+    elements.downloadSlidesPdfBtn.addEventListener('click', () => downloadSlides('pdf'));
 }
 
 function switchTab(tabName) {
@@ -862,6 +871,15 @@ async function showClassDetail(classId) {
 
         // Cargar transcripción
         await loadTranscription(classId);
+
+        // Cargar slides si existen
+        if (classData.has_slides) {
+            elements.slidesBtnTab.style.display = '';
+            await loadSlides(classId);
+        } else {
+            elements.slidesBtnTab.style.display = 'none';
+            elements.slidesContent.innerHTML = '';
+        }
 
         // Iniciar sesión de chat y restaurar historial
         await loadClassChat(classId);
@@ -968,6 +986,59 @@ function buildAiMarkdown(segments, className, date, duration) {
     }
 
     return lines.join('\n');
+}
+
+// ── Slides / Presentación ─────────────────────
+
+async function loadSlides(classId) {
+    try {
+        const res  = await fetch(`/api/classes/${classId}/slides`);
+        const data = await res.json();
+        if (!res.ok || !data.content) {
+            elements.slidesContent.innerHTML = '<p class="text-muted">No hay slides disponibles</p>';
+            return;
+        }
+        const slides = parseSlidesMarkdown(data.content);
+        elements.slidesCount.textContent = `${slides.length} slide${slides.length !== 1 ? 's' : ''}`;
+        elements.slidesContent.innerHTML = slides.map(s => `
+            <div class="slide-card">
+                <div class="slide-card-header">
+                    <span class="slide-num">Slide ${s.num}</span>
+                    ${s.ts ? `<span class="slide-ts">${s.ts}</span>` : ''}
+                </div>
+                ${s.text ? `<div class="slide-card-text">${escapeHtml(s.text)}</div>` : ''}
+                ${s.visual ? `<div class="slide-card-visual">
+                    <span class="visual-label">🖼 Descripción visual</span>
+                    <p>${escapeHtml(s.visual)}</p>
+                </div>` : ''}
+            </div>`).join('');
+    } catch (err) {
+        console.error('Error cargando slides:', err);
+        elements.slidesContent.innerHTML = '<p class="text-muted">Error al cargar los slides</p>';
+    }
+}
+
+function parseSlidesMarkdown(md) {
+    const parts = md.split(/\n---\n|\n---$/);
+    return parts.map(section => {
+        const headerMatch = section.match(/^##\s+Slide\s+(\d+)\s*(?:\[([^\]]+)\])?/m);
+        if (!headerMatch) return null;
+        const body  = section.replace(/^##[^\n]*\n?/, '').trim();
+        const lines = body.split('\n');
+        const text   = lines.filter(l => !l.startsWith('> ')).join('\n').trim();
+        const visual = lines.filter(l => l.startsWith('> ')).map(l => l.slice(2)).join('\n').trim();
+        return { num: headerMatch[1], ts: headerMatch[2] || '', text, visual };
+    }).filter(Boolean);
+}
+
+function downloadSlides(format) {
+    if (!state.currentClass) return;
+    const a = document.createElement('a');
+    a.href = `/api/classes/${state.currentClass.id}/slides/download?format=${format}`;
+    a.download = '';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
 }
 
 function downloadTranscription() {
