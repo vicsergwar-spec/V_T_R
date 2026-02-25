@@ -1,26 +1,33 @@
 # V_T_R - Video Transcriptor y Resumen
 
-Sistema completo de procesamiento de videos de clases académicas. Transcribe videos usando Whisper con GPU local y genera resúmenes inteligentes con Gemini AI.
+Sistema completo de procesamiento de videos de clases académicas. Transcribe videos usando Whisper con GPU local y genera resúmenes inteligentes, chats individuales por clase y chat general por carpeta con Google Gemini AI.
 
 ## Características
 
-- **Transcripción automática** con Whisper usando GPU (CUDA)
+- **Transcripción automática** con faster-Whisper usando GPU (CUDA)
 - **Resúmenes inteligentes** generados por Gemini AI
-- **Chat interactivo** para hacer preguntas sobre el contenido de cada clase
+- **Chat por clase** — pregunta sobre el contenido de una clase específica
+- **Chat por carpeta** — chat general con el conocimiento de **todas** las clases de una materia a la vez
 - **Historial de chat persistente** — los chats se conservan entre sesiones y solo se borran cuando el usuario lo decide
-- **Context Caching de Gemini** — la transcripción se sube una vez al caché de Gemini; los mensajes siguientes no reenvían la transcripción completa, ahorrando tokens
-- **Organización automática** de archivos por materia y tema
-- **Soporte para múltiples formatos** de video (mp4, mkv, avi, mov, etc.)
-- **Interfaz web moderna** y fácil de usar
+- **Context Caching de Gemini** — la transcripción se sube una vez al caché (dura 1 hora); los mensajes siguientes no reenvían el contenido completo, ahorrando tokens
+- **Extracción de slides** — detecta y extrae los fotogramas relevantes del video (requiere Google Vision API)
+- **Organización automática** de archivos por materia/carpeta y tema
+- **Soporte para múltiples formatos** de video (mp4, mkv, avi, mov, webm, etc.)
+- **Lanzadores automáticos** (`run.bat` / `run.sh`) — actualizan el código, instalan dependencias y arrancan el servidor con un doble clic
+
+---
 
 ## Requisitos del Sistema
 
-- **Windows 11**
+- **Windows 11** (o Linux/macOS con `run.sh`)
 - **Python 3.10+** (recomendado 3.11 o 3.12)
-- **GPU NVIDIA** con soporte CUDA (mínimo 6GB VRAM para modelo small)
+- **GPU NVIDIA** con soporte CUDA (mínimo 6 GB VRAM para modelo `medium`)
 - **FFmpeg** instalado en el sistema
-- **API Key de Gemini** (Google AI Studio)
-- **API Key de OpenAI** (opcional, para respaldo de Whisper)
+- **API Key de Gemini** (Google AI Studio) — obligatoria
+- **API Key de OpenAI** (opcional, para usar Whisper en la nube sin GPU)
+- **API Key de Google Vision** (opcional, para extracción de slides)
+
+---
 
 ## Instalación Paso a Paso
 
@@ -40,7 +47,7 @@ winget install FFmpeg.FFmpeg
 
 #### Opción B: Descarga manual
 1. Descargar desde https://ffmpeg.org/download.html (Windows builds)
-2. Extraer el archivo en `C:\ffmpeg`
+2. Extraer en `C:\ffmpeg`
 3. Agregar `C:\ffmpeg\bin` al PATH del sistema:
    - Buscar "Variables de entorno" en el menú inicio
    - Editar la variable `Path` del sistema
@@ -56,20 +63,20 @@ ffmpeg -version
 
 ```bash
 # Crear entorno virtual
-python -m venv venv
+python -m venv .venv
 
 # Activar en Windows (PowerShell)
-.\venv\Scripts\Activate.ps1
+.\.venv\Scripts\Activate.ps1
 
 # Activar en Windows (CMD)
-.\venv\Scripts\activate.bat
+.\.venv\Scripts\activate.bat
 ```
 
 ### 4. Instalar PyTorch con soporte CUDA
 
-**Importante:** Instalar PyTorch ANTES de las demás dependencias.
+**Importante:** Instalar PyTorch **antes** de las demás dependencias.
 
-Para CUDA 12.1 (compatible con CUDA 12.5):
+Para CUDA 12.x:
 ```bash
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 ```
@@ -92,49 +99,82 @@ print(f"GPU: {torch.cuda.get_device_name(0)}")
 pip install -r requirements.txt
 ```
 
-> **Nota:** Si ya tenías el proyecto instalado y estás actualizando, ejecuta:
+> **Nota:** Si actualizas desde una versión anterior, ejecuta:
 > ```bash
 > pip install --upgrade google-generativeai
 > ```
-> Se requiere `google-generativeai>=0.7.0` para que funcione el Context Caching.
+> Se requiere `google-generativeai >= 0.7.0` para el Context Caching.
 
 ### 6. Configurar API Keys
 
 1. Copiar el archivo de ejemplo:
 ```bash
+# Windows
 copy .env.example .env
+
+# Linux / macOS
+cp .env.example .env
 ```
 
-2. Editar `.env` con tus API keys:
+2. Editar `.env` con tus claves:
 ```
 GEMINI_API_KEY=tu_api_key_de_gemini
 OPENAI_API_KEY=tu_api_key_de_openai_opcional
+GOOGLE_VISION_API_KEY=tu_api_key_de_vision_opcional
+SLIDE_EXTRACTION_ENABLED=true
 ```
 
 #### Obtener API Key de Gemini
 1. Ir a https://aistudio.google.com/app/apikey
 2. Crear o seleccionar un proyecto
 3. Generar una nueva API key
-4. Copiar y pegar en el archivo `.env`
+4. Copiar y pegar en `.env`
 
 #### Cambiar el modelo de Gemini
 El modelo se configura en `config.py`:
 ```python
-GEMINI_MODEL = "gemini-3-flash-preview"  # Cambia aquí por el ID exacto de Google AI Studio
+GEMINI_MODEL = "gemini-3-flash-preview"  # Cambia por el ID exacto de Google AI Studio
 ```
 
 #### Obtener API Key de OpenAI (opcional)
 1. Ir a https://platform.openai.com/api-keys
 2. Crear una nueva API key
-3. Copiar y pegar en el archivo `.env`
+3. Copiar y pegar en `.env`
 
-### 7. Ejecutar el servidor
+---
+
+## Uso Rápido (Recomendado)
+
+### Opción A — Lanzador automático (un doble clic)
+
+| Sistema operativo | Archivo a ejecutar |
+|---|---|
+| Windows | `run.bat` |
+| Linux / macOS | `run.sh` |
+
+El lanzador realiza automáticamente:
+1. `git pull` — descarga los últimos cambios del repositorio (si hay conexión)
+2. Activa el entorno virtual (`.venv/` o `venv/`) si existe
+3. `pip install -r requirements.txt` — instala/actualiza dependencias
+4. Verifica que el archivo `.env` exista
+5. Arranca el servidor Flask
+
+> **Nota:** `git pull` no necesita configuración — git ya conoce la URL del repositorio desde que fue clonado (guardada en `.git/config`). Si no hay conexión, el lanzador continúa con la versión local sin interrumpirse.
+
+### Opción B — Manual
 
 ```bash
+# Activar entorno virtual
+.\.venv\Scripts\activate.bat   # Windows CMD
+source .venv/bin/activate       # Linux / macOS
+
+# Iniciar el servidor
 python app.py
 ```
 
-El servidor iniciará en http://127.0.0.1:5000
+El servidor inicia en **http://127.0.0.1:5000**
+
+---
 
 ## Uso del Sistema
 
@@ -142,67 +182,107 @@ El servidor iniciará en http://127.0.0.1:5000
 
 1. Abrir http://127.0.0.1:5000 en el navegador
 2. Arrastrar un video al área de upload o hacer clic para seleccionar
-3. Seleccionar el modelo de Whisper (small recomendado para 6GB VRAM)
-4. Hacer clic en "Procesar"
-5. Esperar mientras el sistema:
-   - Extrae el audio del video
-   - Transcribe con Whisper
+3. Seleccionar el modelo de Whisper:
+
+   | Modelo | VRAM aprox. | Recomendado para |
+   |---|---|---|
+   | `small` | ~1–2 GB | GPUs con poca VRAM |
+   | `medium` | ~3 GB | Uso general (recomendado) |
+   | `large-v3` | ~4–5 GB | Máxima calidad |
+   | `openai` | Sin GPU | Sin GPU local |
+
+4. Hacer clic en **"Procesar"**
+5. El sistema:
+   - Extrae el audio del video con FFmpeg
+   - Transcribe con faster-Whisper (GPU)
    - Genera nombre y resumen con Gemini
-   - Guarda los archivos
+   - Extrae slides relevantes (si está habilitado)
+   - Guarda todos los archivos
 
 ### Ver Clases Procesadas
 
-1. Ir a la sección "Mis Clases"
-2. Las clases se muestran como tarjetas con el nombre de materia y tema
-3. Hacer clic en una tarjeta para ver el detalle
+1. Ir a la sección **"Mis Clases"**
+2. Las clases se agrupan por carpeta/materia
+3. Hacer clic en una tarjeta para ver el detalle (resumen, transcripción, slides)
 
-### Chatear con una Clase
+### Chat por Clase
 
 1. Seleccionar una clase
-2. En la sección de chat, escribir una pregunta
-3. La IA responderá basándose en el contenido de la transcripción
-4. El historial de chat se guarda automáticamente — al volver a abrir la clase los mensajes siguen ahí
+2. Escribir una pregunta en el chat
+3. La IA responde basándose en la transcripción, resumen y slides de esa clase
+4. El historial se guarda automáticamente — al volver a abrir la clase los mensajes siguen ahí
 5. Para borrar el historial usar el botón **"Limpiar chat"**
+
+### Chat por Carpeta (todas las clases)
+
+1. En la lista de clases, cada carpeta/materia tiene un botón **"Chat"**
+2. Al abrirlo, el sistema carga el contenido de **todas las clases** de esa carpeta
+3. Puedes preguntar sobre temas que abarcan varias clases y la IA citará de qué clase proviene cada respuesta
+4. El historial de este chat también se guarda por separado y persiste entre sesiones
+5. Para borrar, usar el botón **"Limpiar chat"** dentro del chat de carpeta
 
 ### Cómo funciona el Context Caching
 
-Al iniciar el chat de una clase por primera vez, la transcripción se sube al caché de Gemini (dura 1 hora). Mientras el caché esté activo, cada mensaje solo envía el historial y la pregunta nueva, no la transcripción completa. Esto reduce el consumo de tokens significativamente en clases largas.
+Al iniciar cualquier sesión de chat (por clase o por carpeta), el contenido se sube al caché de Gemini (dura **1 hora**). Mientras el caché esté activo, cada mensaje solo envía el historial y la pregunta nueva, sin reenviar el contenido completo. Esto reduce el consumo de tokens significativamente.
 
-Si la transcripción es muy corta o el modelo no soporta caché, el sistema hace fallback automático sin interrumpir el chat. En los logs del servidor verás si el caché está activo:
+Si el contenido es muy corto o el modelo no soporta caché, el sistema hace **fallback automático** sin interrumpir el chat. En los logs del servidor verás:
 ```
 Caché de Gemini creado: cachedContents/...
 # o en fallback:
 Context caching no disponible (...), usando system_instruction estándar
 ```
 
-## Estructura de Archivos Generados
+---
 
-Cada clase procesada se guarda en:
+## Estructura del Proyecto
+
 ```
-clases/
-└── Materia_Tema/
-    ├── transcripcion.jsonl   # Transcripción con timestamps
-    ├── resumen.md            # Resumen estructurado
-    ├── chat_historial.json   # Historial de chat (se crea al primer mensaje)
-    └── gemini_cache.txt      # Nombre del caché de Gemini (se crea si aplica)
+V_T_R/
+├── app.py                  # Servidor Flask y rutas de la API
+├── config.py               # Configuración global (modelos, paths, API keys)
+├── requirements.txt        # Dependencias de Python
+├── run.bat                 # Lanzador automático para Windows
+├── run.sh                  # Lanzador automático para Linux/macOS
+├── .env                    # API keys (no subir al repositorio)
+├── .env.example            # Plantilla para crear .env
+├── services/
+│   ├── audio_extractor.py  # Extracción de audio con FFmpeg
+│   ├── file_manager.py     # Lectura/escritura de archivos de clases y carpetas
+│   ├── gemini_service.py   # Integración con Gemini API (chat, caché, resúmenes)
+│   ├── slide_extractor.py  # Extracción de slides con Google Vision
+│   └── transcriber.py      # Transcripción con faster-Whisper
+├── static/
+│   ├── index.html          # Interfaz web (SPA)
+│   ├── css/style.css       # Estilos (tema oscuro)
+│   └── js/app.js           # Lógica del frontend
+└── clases/                 # Datos generados (creado automáticamente)
+    └── Materia_Tema/
+        ├── transcripcion.jsonl         # Transcripción con timestamps
+        ├── resumen.md                  # Resumen estructurado
+        ├── slides/                     # Fotogramas extraídos
+        ├── chat_historial.json         # Historial de chat por clase
+        ├── gemini_cache.txt            # Nombre del caché de Gemini (por clase)
+        ├── folder_chat_historial.json  # Historial del chat de carpeta
+        └── folder_gemini_cache.txt     # Caché de Gemini del chat de carpeta
 ```
 
-### Formato de Transcripción (JSONL)
-Cada línea contiene:
+### Formatos de archivos generados
+
+**Transcripción (`transcripcion.jsonl`)** — una línea por segmento:
 ```json
 {"timestamp_inicio": "00:00:00.000", "timestamp_fin": "00:00:05.230", "texto": "texto transcrito", "confianza": 0.95}
 ```
 
-### Formato de Resumen (Markdown)
+**Resumen (`resumen.md`)**:
 ```markdown
 # Nombre de la clase
 ## Fecha de procesamiento
 ## Puntos principales
 ## Lo más importante para estudiar
-## Tareas o pendientes mencionadas
+## Tareas o pendientes mencionados
 ```
 
-### Formato del Historial de Chat (JSON)
+**Historial de chat (`chat_historial.json` / `folder_chat_historial.json`)**:
 ```json
 [
   {"role": "user",  "content": "¿Qué es una derivada?"},
@@ -210,52 +290,85 @@ Cada línea contiene:
 ]
 ```
 
+---
+
+## API REST
+
+El backend expone los siguientes endpoints:
+
+| Método | Endpoint | Descripción |
+|---|---|---|
+| `POST` | `/api/upload` | Sube y procesa un video |
+| `GET` | `/api/classes` | Lista todas las clases |
+| `GET` | `/api/class/<id>` | Detalle de una clase |
+| `DELETE` | `/api/class/<id>` | Elimina una clase |
+| `POST` | `/api/chat/<id>/start` | Inicia sesión de chat (por clase) |
+| `POST` | `/api/chat/<id>/message` | Envía mensaje al chat (por clase) |
+| `GET` | `/api/chat/<id>/history` | Obtiene historial (por clase) |
+| `POST` | `/api/chat/<id>/clear` | Limpia historial (por clase) |
+| `POST` | `/api/folder-chat/<path>/start` | Inicia sesión de chat (por carpeta) |
+| `POST` | `/api/folder-chat/<path>/message` | Envía mensaje al chat (por carpeta) |
+| `GET` | `/api/folder-chat/<path>/history` | Obtiene historial (por carpeta) |
+| `POST` | `/api/folder-chat/<path>/clear` | Limpia historial (por carpeta) |
+
+---
+
 ## Solución de Problemas
 
-### Error: CUDA no disponible
+### CUDA no disponible
 - Verificar que los drivers de NVIDIA están actualizados
 - Reinstalar PyTorch con la versión correcta de CUDA
 - Reiniciar el sistema después de actualizar drivers
 
-### Error: FFmpeg no encontrado
-- Verificar que FFmpeg está en el PATH
+### FFmpeg no encontrado
+- Verificar que FFmpeg está en el PATH: `ffmpeg -version`
 - Reiniciar la terminal después de agregarlo al PATH
 
-### Error: API Key inválida
+### API Key inválida
 - Verificar que el archivo `.env` existe y contiene las keys correctas
-- Asegurar que no hay espacios extra alrededor de las keys
+- Asegurar que no hay espacios extra alrededor de los valores
 
 ### El chat no recuerda la conversación anterior
 - Verificar que `chat_historial.json` existe en la carpeta de la clase
-- Si no existe, el historial se guarda al primer mensaje
+- El historial se crea al primer mensaje enviado
 
 ### Context caching no funciona
-- Verificar que `google-generativeai>=0.7.0` está instalado: `pip show google-generativeai`
+- Verificar versión: `pip show google-generativeai` (requiere >= 0.7.0)
 - El caching requiere un mínimo de tokens; transcripciones muy cortas usan fallback automático
-- Verificar que el modelo seleccionado soporta Context Caching en Google AI Studio
+- Verificar que el modelo configurado en `config.py` soporta Context Caching en Google AI Studio
 
 ### La transcripción es muy lenta
-- Usar el modelo "small" en lugar de "medium"
+- Usar el modelo `small` en lugar de `medium`
 - Cerrar otras aplicaciones que usen la GPU
-- Verificar que Whisper está usando CUDA y no CPU
+- Verificar que Whisper está usando CUDA y no CPU:
+  ```python
+  import torch
+  print(torch.cuda.is_available())  # Debe ser True
+  ```
 
-### Whisper usa CPU en lugar de GPU
-Verificar con:
-```python
-import whisper
-model = whisper.load_model("small")
-print(model.device)  # Debe mostrar 'cuda:0'
-```
+### El chat de carpeta no carga contenido
+- Verificar que la carpeta contiene clases con transcripciones procesadas
+- Las clases sin transcripción se omiten automáticamente
+- Revisar los logs del servidor para ver cuántas clases fueron cargadas
+
+### run.bat o run.sh falla al hacer git pull
+- El script continúa automáticamente con la versión local — no es un error crítico
+- Si hay problemas de permisos en Linux: `chmod +x run.sh`
+
+---
 
 ## Tecnologías Utilizadas
 
-- **Backend:** Flask (Python)
-- **Transcripción:** OpenAI Whisper (local con CUDA)
-- **IA:** Google Gemini API (con Context Caching)
+- **Backend:** Flask 3.0+ (Python)
+- **Transcripción:** faster-Whisper (local con CUDA) / OpenAI Whisper API (nube)
+- **IA:** Google Gemini API con Context Caching
 - **Audio:** FFmpeg + Pydub
-- **Frontend:** HTML5, CSS3, JavaScript vanilla
+- **Slides:** Google Cloud Vision API (opcional)
+- **Frontend:** HTML5, CSS3, JavaScript vanilla (SPA, tema oscuro)
+- **Almacenamiento:** Sistema de archivos (JSONL, Markdown, JSON, TXT) — sin base de datos
+
+---
 
 ## Licencia
 
 MIT License
-
