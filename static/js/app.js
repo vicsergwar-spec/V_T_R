@@ -308,29 +308,37 @@ async function processVideo() {
     formData.append('folder_path', elements.folderSelect.value);
 
     try {
-        // Simular pasos de progreso
-        const progressSteps = [
-            { percent: 10, text: 'Subiendo video...' },
-            { percent: 25, text: 'Extrayendo audio...' },
-            { percent: 50, text: 'Transcribiendo con Whisper...' },
-            { percent: 75, text: 'Generando nombre y resumen con Gemini...' },
-            { percent: 90, text: 'Guardando archivos...' }
-        ];
+        // Polling real del estado del servidor cada 1.5s
+        const startTime = Date.now();
 
-        let stepIndex = 0;
-        const progressInterval = setInterval(() => {
-            if (stepIndex < progressSteps.length) {
-                updateProgress(progressSteps[stepIndex].percent, progressSteps[stepIndex].text);
-                stepIndex++;
-            }
-        }, 3000);
+        function elapsedStr() {
+            const sec = Math.floor((Date.now() - startTime) / 1000);
+            if (sec < 5) return '';
+            const mm = String(Math.floor(sec / 60)).padStart(2, '0');
+            const ss = String(sec % 60).padStart(2, '0');
+            return ` · ${mm}:${ss}`;
+        }
+
+        async function pollStatus() {
+            try {
+                const res = await fetch('/api/process/status');
+                const s = await res.json();
+                if (s.percent > 0) {
+                    const detail = s.detail ? ` (${s.detail})` : '';
+                    updateProgress(s.percent, s.step + detail + elapsedStr());
+                }
+            } catch (_) { /* servidor ocupado, se reintenta */ }
+        }
+
+        const statusInterval = setInterval(pollStatus, 1500);
+        pollStatus(); // llamada inmediata
 
         const response = await fetch('/api/process', {
             method: 'POST',
             body: formData
         });
 
-        clearInterval(progressInterval);
+        clearInterval(statusInterval);
 
         const data = await response.json();
 
@@ -365,6 +373,7 @@ async function processVideo() {
         }
 
     } catch (error) {
+        clearInterval(statusInterval);
         console.error('Error processing video:', error);
         showToast('error', 'Error al procesar', error.message);
         elements.progressContainer.style.display = 'none';
