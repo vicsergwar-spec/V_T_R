@@ -407,6 +407,199 @@ def get_logs():
     return jsonify({"logs": entries, "server_time": time.time()})
 
 
+# ============== DESCARGA DE SLIDES (PDF / MARKDOWN) ==============
+
+def _build_slides_pdf(class_id: str, class_name: str, slides_md: str) -> bytes:
+    """
+    Genera un PDF limpio y estético a partir del contenido Markdown de slides.
+    Usa fpdf2 (puro Python, sin dependencias de sistema).
+    """
+    from fpdf import FPDF
+
+    # ── Paleta ──────────────────────────────────────────────────────────────
+    C_BG       = (248, 249, 250)   # fondo de página
+    C_HEADER   = (30, 58, 138)     # azul oscuro: cabecera de slide
+    C_WHITE    = (255, 255, 255)
+    C_TEXT     = (31, 41, 55)      # gris oscuro: texto principal
+    C_CAPTION  = (107, 114, 128)   # gris medio: pie de página
+    C_VISUAL   = (234, 179, 8)     # amarillo: caja de diagrama
+    C_VISUAL_BG= (255, 251, 235)   # fondo caja diagrama
+
+    class SlidesPDF(FPDF):
+        def header(self):
+            if self.page_no() == 1:
+                return
+            self.set_font("Helvetica", "I", 7)
+            self.set_text_color(*C_CAPTION)
+            self.set_y(6)
+            self.cell(0, 4, f"V_T_R · {class_name.replace('_', ' ')}", align="L")
+            self.ln(3)
+            self.set_draw_color(*C_CAPTION)
+            self.set_line_width(0.2)
+            self.line(10, self.get_y(), 200, self.get_y())
+            self.ln(2)
+
+        def footer(self):
+            if self.page_no() == 1:
+                return
+            self.set_y(-12)
+            self.set_font("Helvetica", "", 7)
+            self.set_text_color(*C_CAPTION)
+            self.cell(0, 4, f"Pág. {self.page_no() - 1}", align="C")
+
+    pdf = SlidesPDF()
+    pdf.set_margins(left=14, top=14, right=14)
+    pdf.set_auto_page_break(auto=True, margin=16)
+    pdf.set_page_background(C_BG)  # only in fpdf2
+
+    # ── Portada ──────────────────────────────────────────────────────────────
+    pdf.add_page()
+    # Banda azul superior
+    pdf.set_fill_color(*C_HEADER)
+    pdf.rect(0, 0, 210, 50, "F")
+    pdf.set_y(10)
+    pdf.set_font("Helvetica", "B", 22)
+    pdf.set_text_color(*C_WHITE)
+    pdf.multi_cell(0, 10, "V_T_R", align="C")
+    pdf.set_font("Helvetica", "", 10)
+    pdf.multi_cell(0, 6, "Video Transcriptor y Resumen", align="C")
+
+    pdf.set_y(60)
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.set_text_color(*C_TEXT)
+    clean_name = class_name.replace("_", " ")
+    pdf.multi_cell(0, 8, clean_name, align="C")
+
+    from datetime import datetime
+    pdf.set_y(pdf.get_y() + 6)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(*C_CAPTION)
+    pdf.multi_cell(0, 5, f"Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}", align="C")
+
+    # Contar slides con contenido (secciones ## Slide N)
+    import re as _re
+    n_slides = len(_re.findall(r"^## Slide \d+", slides_md, flags=_re.MULTILINE))
+    pdf.set_y(pdf.get_y() + 4)
+    pdf.multi_cell(0, 5, f"Total slides con contenido: {n_slides}", align="C")
+
+    # ── Parsear secciones del Markdown ───────────────────────────────────────
+    sections = []
+    current = None
+    for line in slides_md.splitlines():
+        if line.startswith("## Slide "):
+            if current:
+                sections.append(current)
+            current = {"header": line[3:], "text_lines": [], "visual": ""}
+        elif current is not None:
+            stripped = line.strip()
+            if stripped.startswith("> "):          # cita → descripción visual
+                current["visual"] = stripped[2:].strip()
+            elif stripped in ("---", "**Texto en pantalla:**", "**Elemento visual detectado:**"):
+                pass
+            elif stripped:
+                current["text_lines"].append(stripped)
+    if current:
+        sections.append(current)
+
+    # ── Páginas de slides ─────────────────────────────────────────────────
+    for sec in sections:
+        pdf.add_page()
+
+        # Cabecera del slide (banda azul)
+        hdr_y = pdf.get_y()
+        pdf.set_fill_color(*C_HEADER)
+        pdf.set_text_color(*C_WHITE)
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.cell(0, 8, sec["header"], fill=True, ln=True, align="L")
+        pdf.ln(3)
+
+        # Texto del slide
+        if sec["text_lines"]:
+            pdf.set_font("Helvetica", "", 10)
+            pdf.set_text_color(*C_TEXT)
+            for tl in sec["text_lines"]:
+                # Sanitizar a latin-1 para fpdf core fonts
+                safe = tl.encode("latin-1", errors="replace").decode("latin-1")
+                pdf.multi_cell(0, 5, safe, align="L")
+                pdf.ln(1)
+
+        # Caja de diagrama / elemento visual
+        if sec["visual"]:
+            pdf.ln(3)
+            x0 = pdf.get_x()
+            y0 = pdf.get_y()
+            pdf.set_fill_color(*C_VISUAL_BG)
+            pdf.set_draw_color(*C_VISUAL)
+            pdf.set_line_width(0.6)
+            # Dibujar borde izquierdo amarillo
+            pdf.line(x0, y0, x0, y0 + 20)
+
+            pdf.set_x(x0 + 4)
+            pdf.set_font("Helvetica", "B", 8)
+            pdf.set_text_color(*[int(c * 0.6) for c in C_VISUAL])
+            pdf.cell(0, 5, "ELEMENTO VISUAL / DIAGRAMA", ln=True)
+
+            pdf.set_x(x0 + 4)
+            pdf.set_font("Helvetica", "I", 9)
+            pdf.set_text_color(*C_TEXT)
+            safe_v = sec["visual"].encode("latin-1", errors="replace").decode("latin-1")
+            pdf.multi_cell(0, 5, safe_v, align="L")
+            pdf.ln(2)
+
+    return bytes(pdf.output())
+
+
+@app.route('/api/classes/<path:class_id>/slides/download', methods=['GET'])
+def download_slides(class_id):
+    """
+    Descarga el contenido de slides en PDF o Markdown.
+    ?format=pdf  (default) · ?format=markdown
+    """
+    fmt = request.args.get("format", "pdf").lower()
+
+    slides_md = file_manager.get_slides(class_id)
+    if not slides_md:
+        return jsonify({"error": "No hay slides para esta clase"}), 404
+
+    class_info = file_manager.get_class_by_id(class_id)
+    class_name = class_info.get("name", class_id) if class_info else class_id
+    # Nombre seguro para el archivo
+    safe_name = "".join(c if c.isalnum() or c in "-_ " else "_" for c in class_name)[:60].strip()
+
+    if fmt == "markdown":
+        from flask import Response
+        # Generar Markdown enriquecido usando format_slides_for_download
+        from services.slide_extractor import SlideExtractor as _SE  # solo para el formatter
+        # Parsear slides desde el markdown guardado para re-formatear
+        md_content = slides_md  # usar directamente el slides.md guardado
+        return Response(
+            md_content,
+            mimetype="text/markdown; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="{safe_name}_slides.md"'
+            },
+        )
+
+    # PDF
+    try:
+        pdf_bytes = _build_slides_pdf(class_id, safe_name, slides_md)
+        from flask import Response
+        return Response(
+            pdf_bytes,
+            mimetype="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{safe_name}_slides.pdf"'
+            },
+        )
+    except ImportError:
+        return jsonify({
+            "error": "fpdf2 no está instalado. Ejecuta: pip install fpdf2"
+        }), 500
+    except Exception as e:
+        logger.error(f"Error generando PDF de slides: {e}")
+        return jsonify({"error": f"Error generando PDF: {str(e)}"}), 500
+
+
 # ============== RUTAS DE CHAT ==============
 
 @app.route('/api/chat/<path:class_id>/start', methods=['POST'])
@@ -421,14 +614,14 @@ def start_chat(class_id):
 
     # Enriquecer con contenido de slides si existe
     slides_content = file_manager.get_slides(class_id) or ""
-    full_context = transcription_text + slides_content
 
     # Restaurar historial y nombre de caché desde disco
     saved_history = file_manager.get_chat_history(class_id) or []
     saved_cache_name = file_manager.get_cache_name(class_id)
 
     new_cache_name = gemini_service.start_chat_session(
-        class_id, full_context,
+        class_id, transcription_text,
+        slides_content=slides_content,
         history=saved_history,
         cached_content_name=saved_cache_name,
     )
@@ -469,11 +662,11 @@ def send_chat_message(class_id):
             if not transcription_text:
                 return jsonify({"error": "No se encontró la transcripción"}), 404
             slides_content = file_manager.get_slides(class_id) or ""
-            full_context = transcription_text + slides_content
             saved_history = file_manager.get_chat_history(class_id) or []
             saved_cache_name = file_manager.get_cache_name(class_id)
             new_cache_name = gemini_service.start_chat_session(
-                class_id, full_context,
+                class_id, transcription_text,
+                slides_content=slides_content,
                 history=saved_history,
                 cached_content_name=saved_cache_name,
             )

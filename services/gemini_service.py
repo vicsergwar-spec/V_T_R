@@ -196,6 +196,7 @@ No se pudo generar el resumen automáticamente. Por favor, revisa la transcripci
         self,
         class_id: str,
         transcription_text: str,
+        slides_content: str = "",
         history: list = None,
         cached_content_name: str = None,
     ) -> Optional[str]:
@@ -203,26 +204,58 @@ No se pudo generar el resumen automáticamente. Por favor, revisa la transcripci
         Inicia (o restaura) una sesión de chat para una clase.
 
         Args:
-            class_id: Identificador único de la clase
-            transcription_text: Texto completo de la transcripción
-            history: Historial previo a restaurar. Si es None se empieza vacío.
-            cached_content_name: Nombre de caché de Gemini guardado previamente.
+            class_id:             Identificador único de la clase
+            transcription_text:   Texto completo de la transcripción (audio)
+            slides_content:       Contenido extraído de los slides (visual), opcional
+            history:              Historial previo a restaurar. Si es None se empieza vacío.
+            cached_content_name:  Nombre de caché de Gemini guardado previamente.
 
         Returns:
             El nombre del caché usado/creado (para persistirlo), o None si no se usó caché.
         """
-        system_instruction = f"""Eres un asistente de estudio especializado. Tu trabajo es ayudar al estudiante a entender y estudiar el contenido de una clase grabada.
+        if slides_content.strip():
+            system_instruction = f"""Eres un asistente de estudio especializado. \
+Tu trabajo es ayudar al estudiante a entender y estudiar el contenido de una clase grabada.
+
+Tienes acceso a DOS fuentes de información de la misma clase:
+
+═══════════════════════════════════════════
+ FUENTE 1 · TRANSCRIPCIÓN DE AUDIO
+ (lo que se DIJO durante la clase)
+═══════════════════════════════════════════
+{transcription_text}
+
+═══════════════════════════════════════════
+ FUENTE 2 · CONTENIDO DE SLIDES / PANTALLA
+ (lo que se MOSTRÓ en el video)
+═══════════════════════════════════════════
+{slides_content}
+
+INSTRUCCIONES:
+1. Responde ÚNICAMENTE basándote en las fuentes anteriores.
+2. Si algo no aparece en ninguna de las dos fuentes, di claramente \
+"Eso no se menciona en esta clase".
+3. SIEMPRE indica de dónde viene la información:
+   - Si se DIJO en clase → añade al final: *(📢 mencionado en clase)*
+   - Si se VIO en los slides → añade al final: *(📊 visto en slides)*
+   - Si aparece en ambas → menciona ambas fuentes.
+4. Sé claro y didáctico. Usa ejemplos de la clase si los hay.
+5. Puedes resumir secciones, explicar conceptos o preparar al estudiante para exámenes.
+6. Usa un tono amigable pero académico."""
+        else:
+            system_instruction = f"""Eres un asistente de estudio especializado. \
+Tu trabajo es ayudar al estudiante a entender y estudiar el contenido de una clase grabada.
 
 TRANSCRIPCIÓN DE LA CLASE:
 {transcription_text}
 
 INSTRUCCIONES:
-1. Responde ÚNICAMENTE basándote en el contenido de la transcripción
-2. Si algo no está en la transcripción, di claramente "Eso no se menciona en esta clase"
-3. Sé claro y didáctico en tus explicaciones
-4. Si el estudiante pregunta sobre un tema, proporciona ejemplos de la clase si los hay
-5. Puedes ayudar a resumir secciones específicas, explicar conceptos, o preparar para exámenes
-6. Usa un tono amigable pero académico"""
+1. Responde ÚNICAMENTE basándote en el contenido de la transcripción.
+2. Si algo no está en la transcripción, di claramente "Eso no se menciona en esta clase".
+3. Sé claro y didáctico en tus explicaciones.
+4. Si el estudiante pregunta sobre un tema, proporciona ejemplos de la clase si los hay.
+5. Puedes ayudar a resumir secciones específicas, explicar conceptos, o preparar para exámenes.
+6. Usa un tono amigable pero académico."""
 
         session_model, cache_name = self._build_cached_model(system_instruction, cached_content_name)
 
