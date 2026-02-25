@@ -76,6 +76,9 @@
                         <input type="file" id="fileInput" accept="video/*" multiple hidden>
                     </div>
 
+                    <!-- Historial de errores de sesiones anteriores -->
+                    <div class="failed-history-panel" id="failedHistoryPanel" style="display:none"></div>
+
                     <!-- Cola de videos -->
                     <div class="queue-list" id="queueList" style="display:none"></div>
 
@@ -210,6 +213,7 @@
                     <div class="tabs">
                         <button class="tab active" data-tab="summary">Resumen</button>
                         <button class="tab" data-tab="transcription">Transcripción</button>
+                        <button class="tab" id="tab-btn-slides" data-tab="slides" style="display:none">Presentación</button>
                         <button class="tab" data-tab="chat">Chat</button>
                     </div>
 
@@ -230,11 +234,39 @@
                                     <polyline points="7 10 12 15 17 10"/>
                                     <line x1="12" y1="15" x2="12" y2="3"/>
                                 </svg>
-                                Descargar para IA
+                                Descargar MD
                             </button>
                         </div>
                         <div class="transcription-content" id="transcriptionContent">
                             <!-- Segmentos de transcripción -->
+                        </div>
+                    </div>
+
+                    <!-- Tab: Presentación (slides extraídos) -->
+                    <div class="tab-content" id="tab-slides">
+                        <div class="slides-tab-header">
+                            <span class="slides-count" id="slidesCount"></span>
+                            <div class="slides-download-btns">
+                                <button class="btn-download-slides" id="downloadSlidesMdBtn" title="Descargar Markdown">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                        <polyline points="7 10 12 15 17 10"/>
+                                        <line x1="12" y1="15" x2="12" y2="3"/>
+                                    </svg>
+                                    Descargar MD
+                                </button>
+                                <button class="btn-download-slides btn-download-pdf" id="downloadSlidesPdfBtn" title="Descargar PDF">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                        <polyline points="7 10 12 15 17 10"/>
+                                        <line x1="12" y1="15" x2="12" y2="3"/>
+                                    </svg>
+                                    Descargar PDF
+                                </button>
+                            </div>
+                        </div>
+                        <div class="slides-content" id="slidesContent">
+                            <!-- Slides renderizados como tarjetas -->
                         </div>
                     </div>
 
@@ -247,7 +279,7 @@
                                         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                                     </svg>
                                     <h3>Chat con la Clase</h3>
-                                    <p>Haz preguntas sobre el contenido de esta clase y obtendrás respuestas basadas en la transcripción.</p>
+                                    <p>Haz preguntas sobre el contenido de esta clase. La IA conoce la transcripción y los slides de la presentación.</p>
                                 </div>
                             </div>
                             <div class="chat-input-container">
