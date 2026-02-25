@@ -27,6 +27,20 @@ logger = logging.getLogger(__name__)
 
 _log_buffer = collections.deque(maxlen=2000)
 
+# ──────────────────────────────────────────────────────────
+# Estado del procesamiento en curso (para la barra de progreso)
+# ──────────────────────────────────────────────────────────
+
+_proc_status = {"step": "Esperando...", "percent": 0, "detail": ""}
+
+
+def _set_status(step: str, percent: int, detail: str = "") -> None:
+    """Actualiza el estado visible en la barra de progreso del frontend."""
+    _proc_status["step"] = step
+    _proc_status["percent"] = percent
+    _proc_status["detail"] = detail
+    logger.info(f"[Estado] {step}{(' — ' + detail) if detail else ''}")
+
 
 class _MemoryLogHandler(logging.Handler):
     """Captura logs en memoria para exponerlos vía /api/logs."""
@@ -297,20 +311,21 @@ def process_video():
 
     try:
         # 1. Guardar video temporal
-        logger.info(f"Procesando video: {filename}")
+        _set_status("Guardando video...", 5)
         video_path = file_manager.save_video_to_temp(video_file, filename)
 
         # 2. Extraer audio
-        logger.info("Extrayendo audio...")
+        _set_status("Extrayendo audio...", 15)
         audio_path = audio_extractor.extract_audio(video_path)
 
         # 3. Transcribir (proceso más pesado)
-        logger.info(f"Transcribiendo con modelo {whisper_model}...")
+        _set_status(f"Transcribiendo con Whisper ({whisper_model})...", 22)
         trans = get_transcriber(whisper_model)
         try:
             result = trans.transcribe(audio_path)
         except Exception as transcribe_error:
             logger.error(f"Error en transcripción con modelo '{whisper_model}': {transcribe_error}")
+            _set_status("Error en transcripción", 0)
             file_manager.cleanup_temp_files(video_path, audio_path)
             video_path = None
             audio_path = None
@@ -327,38 +342,50 @@ def process_video():
         slides_markdown = ""
         if slide_extractor:
             try:
-                logger.info("Extrayendo contenido de slides del video...")
+                _set_status("Detectando cambios de escena...", 65)
+
+                def _slides_progress(current, total, msg):
+                    pct = 65 + round(20 * current / total) if total else 65
+                    _set_status(
+                        f"Analizando imagen {current} de {total}",
+                        pct,
+                        "Cloud Vision + Gemini Vision" if "visual" in msg.lower() else "Cloud Vision",
+                    )
+
                 slides = slide_extractor.extract_slides(
                     video_path=video_path,
                     temp_dir=str(config.TEMP_DIR),
+                    progress_callback=_slides_progress,
                 )
                 slides_markdown = slide_extractor.format_slides_for_context(slides)
+                n_useful = len([s for s in slides if s.get("text") or s.get("visual_description")])
                 if slides_markdown:
-                    logger.info(f"Slides extraídos: {len(slides)} slides con contenido")
+                    logger.info(f"Slides extraídos: {n_useful} con contenido")
                 else:
                     logger.info("No se encontró contenido en los slides del video")
             except Exception as e:
                 logger.warning(f"Error extrayendo slides (continuando sin slides): {e}")
 
         # 5. Generar nombre de carpeta
-        logger.info("Generando nombre de carpeta...")
+        _set_status("Generando nombre de carpeta...", 87)
         context_for_naming = result["text"] + (slides_markdown[:2000] if slides_markdown else "")
         folder_name = gemini_service.generate_folder_name(context_for_naming)
 
         # 6. Crear carpeta y guardar archivos
+        _set_status("Guardando transcripción e imágenes...", 91)
         class_folder = file_manager.create_class_folder(folder_name, parent_path=folder_path)
         file_manager.save_transcription(result["segments"], class_folder)
         if slides_markdown:
             file_manager.save_slides(slides_markdown, class_folder)
 
         # 7. Generar resumen con transcripción + slides (proceso ligero)
-        logger.info("Generando resumen con toda la información...")
+        _set_status("Generando resumen con Gemini...", 94)
         full_context = result["text"] + slides_markdown
         summary = gemini_service.generate_summary(full_context, folder_name)
         file_manager.save_summary(summary, class_folder)
 
-        # 8. Limpiar archivos temporales
-        logger.info("Limpiando archivos temporales...")
+        # 8. Limpiar y finalizar
+        _set_status("¡Listo!", 100)
         file_manager.cleanup_temp_files(video_path, audio_path)
 
         class_id = class_folder.relative_to(file_manager.clases_dir).as_posix()
@@ -366,6 +393,7 @@ def process_video():
         class_info["summary"] = summary
 
         logger.info(f"Procesamiento completado: {class_folder.name}")
+        _set_status("Esperando...", 0)   # resetear para el próximo video
         return jsonify({
             "success": True,
             "message": "Video procesado exitosamente",
@@ -374,12 +402,21 @@ def process_video():
 
     except Exception as e:
         logger.error(f"Error procesando video: {e}")
+        _set_status("Esperando...", 0)
         if video_path:
             file_manager.cleanup_temp_files(video_path, audio_path)
         return jsonify({
             "error": str(e),
             "message": "Error al procesar el video"
         }), 500
+
+
+# ============== ESTADO DEL PROCESAMIENTO ==============
+
+@app.route('/api/process/status', methods=['GET'])
+def get_process_status():
+    """Devuelve el paso actual del procesamiento para la barra de progreso."""
+    return jsonify(_proc_status)
 
 
 # ============== LOGS EN MEMORIA ==============
