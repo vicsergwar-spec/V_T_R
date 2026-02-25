@@ -88,6 +88,21 @@ class FileManager:
         logger.info(f"Resumen guardado: {output_path}")
         return str(output_path)
 
+    def save_slides(self, slides_markdown: str, class_folder: Path) -> str:
+        """Guarda el contenido de slides extraídos como Markdown."""
+        output_path = class_folder / "slides.md"
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(slides_markdown)
+        logger.info(f"Slides guardados: {output_path}")
+        return str(output_path)
+
+    def get_slides(self, class_id: str) -> Optional[str]:
+        """Devuelve el contenido de slides si existe, o None."""
+        slides_path = self.clases_dir / class_id / "slides.md"
+        if slides_path.exists():
+            return slides_path.read_text(encoding="utf-8")
+        return None
+
     def save_video_to_temp(self, file_storage, filename: str) -> str:
         safe_filename = self._sanitize_filename(filename)
         temp_path = self.temp_dir / safe_filename
@@ -360,6 +375,7 @@ class FileManager:
             "created_at_formatted": created_at.strftime("%d/%m/%Y %H:%M"),
             "has_transcription": transcription_path.exists(),
             "has_summary": summary_path.exists(),
+            "has_slides": (folder / "slides.md").exists(),
             "segment_count": segment_count,
             "path": str(folder)
         }

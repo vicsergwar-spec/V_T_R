@@ -22,6 +22,11 @@ TEMP_DIR.mkdir(exist_ok=True)
 # API Keys
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GOOGLE_VISION_API_KEY = os.getenv("GOOGLE_VISION_API_KEY", "")
+
+# Extracción de slides (requiere GOOGLE_VISION_API_KEY)
+# Poner SLIDE_EXTRACTION_ENABLED=false en .env para desactivar
+SLIDE_EXTRACTION_ENABLED = os.getenv("SLIDE_EXTRACTION_ENABLED", "true").lower() == "true"
 
 # Configuración de faster-whisper
 # VRAM estimado con cuantización automática (float16 en GPU para small/medium, int8_float16 para large-v3)

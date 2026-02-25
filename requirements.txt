@@ -27,3 +27,6 @@ python-dotenv>=1.0.0
 
 # Utilidades
 werkzeug>=3.0.0
+
+# Procesamiento de imágenes (para SlideExtractor)
+Pillow>=10.2.0
