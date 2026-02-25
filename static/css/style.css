@@ -654,6 +654,114 @@ body {
 
 .queue-remove:hover { color: var(--error); }
 
+/* Botones de retry en items con error */
+.queue-item-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.btn-retry,
+.btn-retry-openai {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 9px;
+    border-radius: var(--radius-sm);
+    border: 1px solid;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all var(--transition-fast);
+    line-height: 1;
+}
+
+.btn-retry {
+    background: rgba(99, 102, 241, 0.12);
+    border-color: var(--accent-primary);
+    color: var(--accent-light);
+}
+.btn-retry:hover { background: rgba(99, 102, 241, 0.25); }
+
+.btn-retry-openai {
+    background: rgba(34, 197, 94, 0.1);
+    border-color: var(--success);
+    color: var(--success);
+}
+.btn-retry-openai:hover { background: rgba(34, 197, 94, 0.2); }
+
+/* Panel de historial de errores de sesión anterior */
+.failed-history-panel {
+    margin-top: 14px;
+    background: rgba(245, 158, 11, 0.07);
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    border-radius: var(--radius-md);
+    padding: 14px 16px;
+    font-size: 13px;
+}
+
+.fh-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 600;
+    color: var(--warning);
+    margin-bottom: 4px;
+}
+
+.fh-clear-all {
+    font-size: 11px;
+    background: none;
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    padding: 3px 8px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+.fh-clear-all:hover { color: var(--warning); border-color: var(--warning); }
+
+.fh-hint { font-size: 11px; color: var(--text-muted); margin-bottom: 10px; }
+
+.fh-list { display: flex; flex-direction: column; gap: 6px; }
+
+.fh-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 7px 10px;
+    background: var(--bg-card);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+}
+
+.fh-item-info { flex: 1; min-width: 0; }
+
+.fh-item-name {
+    display: block;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 12px;
+}
+
+.fh-item-meta { font-size: 11px; color: var(--text-muted); }
+
+.fh-dismiss {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    padding: 4px;
+    border-radius: var(--radius-sm);
+    display: flex;
+    flex-shrink: 0;
+    transition: color var(--transition-fast);
+}
+.fh-dismiss:hover { color: var(--error); }
+
 /* Fila de checkbox apagado */
 .shutdown-row {
     display: flex;

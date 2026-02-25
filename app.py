@@ -811,5 +811,6 @@ if __name__ == '__main__':
         host=config.FLASK_HOST,
         port=config.FLASK_PORT,
         debug=config.FLASK_DEBUG,
-        use_reloader=False   # evita la segunda ventana del reloader de Flask
+        threaded=True,           # permite atender /api/process/status mientras procesa
+        use_reloader=False       # evita la segunda ventana del reloader de Flask
     )

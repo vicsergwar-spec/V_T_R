@@ -39,6 +39,7 @@ const elements = {
     fileInput: document.getElementById('fileInput'),
     queueList: document.getElementById('queueList'),
     queueCounter: document.getElementById('queueCounter'),
+    failedHistoryPanel: document.getElementById('failedHistoryPanel'),
     shutdownCheckbox: document.getElementById('shutdownCheckbox'),
     modelSelect: document.getElementById('modelSelect'),
     processBtn: document.getElementById('processBtn'),
@@ -252,6 +253,7 @@ function initUpload() {
     });
 
     loadFolders();
+    renderFailedHistory(); // mostrar videos fallidos de la sesión anterior
 }
 
 // ── Cola ──────────────────────────────────────
@@ -259,9 +261,11 @@ function initUpload() {
 function addFilesToQueue(files) {
     for (const f of [...files]) {
         if (!f.type.startsWith('video/')) continue;
+        // si había un error previo con ese nombre en el historial, quitarlo
+        removeFromFailedHistory(f.name);
         // evitar duplicados con mismo nombre en estado pendiente
         if (state.queue.find(q => q.file.name === f.name && q.status === 'pending')) continue;
-        state.queue.push({ file: f, status: 'pending', error: '' });
+        state.queue.push({ file: f, status: 'pending', error: '', isGpuError: false });
     }
     renderQueue();
     updateProcessBtn();
@@ -286,15 +290,25 @@ function renderQueue() {
     const icons   = { pending: '⏳', processing: '⚙️', done: '✓', error: '✕' };
     const labels  = { pending: 'En espera', processing: 'Procesando...', done: 'Completado' };
 
+    const dismissSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+                          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                        </svg>`;
+
     list.innerHTML = '';
     state.queue.forEach((item, i) => {
         const label = item.status === 'error' ? (item.error || 'Error') : labels[item.status];
-        const removeBtn = item.status === 'pending'
-            ? `<button class="queue-remove" data-idx="${i}" title="Quitar">
-                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15">
-                   <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                 </svg></button>`
-            : '';
+
+        let actions = '';
+        if (item.status === 'pending') {
+            actions = `<button class="queue-remove" data-idx="${i}" title="Quitar">${dismissSvg}</button>`;
+        } else if (item.status === 'error') {
+            actions = `<div class="queue-item-actions">
+                <button class="btn-retry" data-idx="${i}" title="Reintentar">↺ Reintentar</button>
+                ${item.isGpuError ? `<button class="btn-retry-openai" data-idx="${i}" title="Usar OpenAI">☁ OpenAI</button>` : ''}
+                <button class="queue-remove" data-idx="${i}" title="Quitar">${dismissSvg}</button>
+            </div>`;
+        }
+
         const div = document.createElement('div');
         div.className = `queue-item ${item.status}`;
         div.innerHTML = `
@@ -303,14 +317,37 @@ function renderQueue() {
                 <div class="queue-item-name">${item.file.name}</div>
                 <div class="queue-item-meta">${formatFileSize(item.file.size)} · <span class="status-${item.status}">${label}</span></div>
             </div>
-            ${removeBtn}`;
+            ${actions}`;
         list.appendChild(div);
     });
 
     list.querySelectorAll('.queue-remove').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
-            removeFromQueue(parseInt(btn.dataset.idx));
+            const idx = parseInt(btn.dataset.idx);
+            state.queue.splice(idx, 1);
+            renderQueue();
+            updateProcessBtn();
+        });
+    });
+    list.querySelectorAll('.btn-retry').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const idx = parseInt(btn.dataset.idx);
+            state.queue[idx].status = 'pending';
+            state.queue[idx].error  = '';
+            renderQueue();
+            updateProcessBtn();
+        });
+    });
+    list.querySelectorAll('.btn-retry-openai').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const idx = parseInt(btn.dataset.idx);
+            state.queue[idx].status = 'pending';
+            state.queue[idx].error  = '';
+            state.queue[idx].isGpuError = false;
+            elements.modelSelect.value = 'openai';
+            renderQueue();
+            updateProcessBtn();
         });
     });
 }
@@ -372,10 +409,14 @@ async function processQueue() {
     const doneCount  = state.queue.filter(q => q.status === 'done').length;
     const errorCount = state.queue.filter(q => q.status === 'error').length;
 
+    // Guardar fallidos en historial persistente
+    if (errorCount > 0) {
+        saveFailedHistory();
+    }
+
     if (doneCount > 0) {
         updateProgress(100, `¡${doneCount} clase${doneCount > 1 ? 's' : ''} creada${doneCount > 1 ? 's' : ''}!`);
         if (total === 1 && doneCount === 1) {
-            // Si solo había un video, ir directo a la clase
             const last = state.queue.find(q => q.status === 'done');
             if (last?._classId) showClassDetail(last._classId);
         }
@@ -440,7 +481,8 @@ async function processOneVideo(item, currentNum, totalNum) {
         }
 
         if (data.gpu_failed && data.openai_available) {
-            throw new Error('Fallo en GPU. Cambia el modelo a "OpenAI API" e inténtalo de nuevo.');
+            item.isGpuError = true;
+            throw new Error('Fallo en GPU — usa el botón ☁ OpenAI para reintentar en la nube.');
         }
 
         throw new Error(data.error || 'Error desconocido');
@@ -449,6 +491,71 @@ async function processOneVideo(item, currentNum, totalNum) {
         clearInterval(statusInterval);
         throw err;
     }
+}
+
+// ── Historial de errores (localStorage) ───────
+
+const HISTORY_KEY = 'vtr_failed_videos';
+
+function saveFailedHistory() {
+    const failed = state.queue.filter(q => q.status === 'error').map(q => ({
+        name:      q.file.name,
+        sizeLabel: formatFileSize(q.file.size),
+        error:     q.error,
+        isGpuError: q.isGpuError,
+        savedAt:   new Date().toISOString()
+    }));
+    if (failed.length === 0) return;
+    // Combinar con historial anterior (sin duplicar por nombre)
+    const prev = loadRawHistory().filter(p => !failed.find(f => f.name === p.name));
+    localStorage.setItem(HISTORY_KEY, JSON.stringify([...prev, ...failed]));
+    renderFailedHistory();
+}
+
+function loadRawHistory() {
+    try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); } catch { return []; }
+}
+
+function removeFromFailedHistory(name) {
+    const updated = loadRawHistory().filter(h => h.name !== name);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
+    renderFailedHistory();
+}
+
+function clearAllFailedHistory() {
+    localStorage.removeItem(HISTORY_KEY);
+    renderFailedHistory();
+}
+
+function renderFailedHistory() {
+    const panel = elements.failedHistoryPanel;
+    const history = loadRawHistory();
+    if (history.length === 0) {
+        panel.style.display = 'none';
+        return;
+    }
+    panel.style.display = 'block';
+    const dismissSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+    panel.innerHTML = `
+        <div class="fh-header">
+            <span>⚠ Videos que fallaron en la sesión anterior</span>
+            <button class="fh-clear-all" id="fhClearAll">Limpiar todo</button>
+        </div>
+        <div class="fh-hint">Arrastra los archivos de nuevo para reintentar</div>
+        <div class="fh-list">
+            ${history.map(h => `
+                <div class="fh-item">
+                    <div class="fh-item-info">
+                        <span class="fh-item-name">${h.name}</span>
+                        <span class="fh-item-meta">${h.sizeLabel} · <span class="status-error">${h.error}</span></span>
+                    </div>
+                    <button class="fh-dismiss" data-name="${h.name}" title="Quitar">${dismissSvg}</button>
+                </div>`).join('')}
+        </div>`;
+    panel.querySelector('#fhClearAll').addEventListener('click', clearAllFailedHistory);
+    panel.querySelectorAll('.fh-dismiss').forEach(btn => {
+        btn.addEventListener('click', () => removeFromFailedHistory(btn.dataset.name));
+    });
 }
 
 function updateProgress(percent, text) {
