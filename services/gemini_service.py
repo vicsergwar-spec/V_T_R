@@ -349,3 +349,99 @@ INSTRUCCIONES:
         if class_id in self.chat_sessions:
             del self.chat_sessions[class_id]
             logger.info(f"Sesión de chat terminada para clase: {class_id}")
+
+    # ──────────────────────────────────────────────────────────
+    # Chat general de carpeta
+    # ──────────────────────────────────────────────────────────
+
+    def start_folder_chat_session(
+        self,
+        folder_id: str,
+        folder_name: str,
+        classes_content: list,
+        history: list = None,
+        cached_content_name: str = None,
+    ) -> Optional[str]:
+        """
+        Inicia (o restaura) una sesión de chat para una carpeta completa.
+        El contexto incluye toda la información de todas las clases de la carpeta.
+
+        Args:
+            folder_id:            ID único de la carpeta (su ruta relativa)
+            folder_name:          Nombre legible de la carpeta
+            classes_content:      Lista de dicts {"name", "transcription", "summary", "slides"}
+            history:              Historial previo a restaurar
+            cached_content_name:  Nombre de caché existente a reutilizar
+
+        Returns:
+            El nombre del caché usado/creado, o None si no se usó caché
+        """
+        MAX_TRANSCRIPTION = 30_000
+        MAX_SUMMARY = 3_000
+        MAX_SLIDES = 8_000
+
+        parts = [
+            f"Eres un asistente académico especializado. Tienes acceso al contenido "
+            f"COMPLETO de la carpeta «{folder_name}» que contiene "
+            f"{len(classes_content)} clase(s) grabada(s).\n",
+            "INSTRUCCIONES IMPORTANTES:",
+            "1. Responde ÚNICAMENTE basándote en el contenido de las clases mostradas.",
+            "2. Indica siempre de qué clase proviene la información: *(📚 Clase: Nombre)*",
+            "3. Si algo no aparece en ninguna clase, di: "
+            "\"Eso no se menciona en las clases de esta carpeta\".",
+            "4. Puedes comparar y relacionar conceptos entre distintas clases.",
+            "5. Sé claro y didáctico. Usa ejemplos del contenido cuando los haya.",
+            "6. Usa un tono amigable pero académico.\n",
+        ]
+
+        for i, cls in enumerate(classes_content, 1):
+            sep = "═" * 60
+            parts.append(sep)
+            parts.append(f"CLASE {i}: {cls['name']}")
+            parts.append(sep)
+
+            if cls.get("summary"):
+                summary = cls["summary"][:MAX_SUMMARY]
+                parts.append("\n📋 RESUMEN:")
+                parts.append(summary)
+                if len(cls["summary"]) > MAX_SUMMARY:
+                    parts.append("[... resumen truncado ...]")
+
+            if cls.get("transcription"):
+                transcription = cls["transcription"][:MAX_TRANSCRIPTION]
+                parts.append("\n📢 TRANSCRIPCIÓN (lo que se DIJO en clase):")
+                parts.append(transcription)
+                if len(cls["transcription"]) > MAX_TRANSCRIPTION:
+                    parts.append("[... transcripción truncada por longitud ...]")
+
+            if cls.get("slides"):
+                slides = cls["slides"][:MAX_SLIDES]
+                parts.append("\n📊 SLIDES / PANTALLA (lo que se MOSTRÓ):")
+                parts.append(slides)
+                if len(cls["slides"]) > MAX_SLIDES:
+                    parts.append("[... slides truncados por longitud ...]")
+
+            parts.append("")
+
+        system_instruction = "\n".join(parts)
+
+        session_model, cache_name = self._build_cached_model(system_instruction, cached_content_name)
+
+        sdk_history = [
+            {"role": msg["role"], "parts": [msg["content"]]}
+            for msg in (history or [])
+        ]
+
+        self.chat_sessions[folder_id] = {
+            "chat": session_model.start_chat(history=sdk_history),
+            "history": list(history) if history else [],
+        }
+
+        action = "restaurada" if history else "iniciada"
+        logger.info(
+            f"Sesión de chat de carpeta {action}: {folder_id} "
+            f"({len(classes_content)} clases, "
+            f"{len(self.chat_sessions[folder_id]['history'])} mensajes previos, "
+            f"caché: {'sí' if cache_name else 'no'})"
+        )
+        return cache_name

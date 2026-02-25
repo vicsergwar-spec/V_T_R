@@ -237,6 +237,75 @@ class FileManager:
         if path.exists():
             path.unlink()
 
+    # ──────────────────────────────────────────────────────────
+    # Chat general de carpeta
+    # ──────────────────────────────────────────────────────────
+
+    def get_folder_all_content(self, folder_path: str) -> list:
+        """
+        Recopila el contenido de TODAS las clases dentro de una carpeta (recursivo).
+        Devuelve lista de dicts: {"name", "transcription", "summary", "slides"}
+        """
+        target_dir = self.clases_dir / folder_path
+        if not target_dir.exists() or not target_dir.is_dir():
+            return []
+
+        classes = []
+        self._scan_for_classes(target_dir, folder_path, classes)
+
+        result = []
+        for cls in classes:
+            result.append({
+                "name": cls["name"],
+                "transcription": self.get_transcription_text(cls["id"]) or "",
+                "summary": self.get_summary(cls["id"]) or "",
+                "slides": self.get_slides(cls["id"]) or "",
+            })
+        return result
+
+    def get_folder_chat_history(self, folder_path: str) -> Optional[list]:
+        """Lee el historial de chat de carpeta guardado en disco."""
+        path = self.clases_dir / folder_path / "folder_chat_historial.json"
+        if not path.exists():
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"Error al leer historial de chat de carpeta: {e}")
+            return None
+
+    def save_folder_chat_history(self, folder_path: str, history: list) -> None:
+        """Guarda el historial de chat de carpeta en disco."""
+        path = self.clases_dir / folder_path / "folder_chat_historial.json"
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(history, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning(f"Error al guardar historial de chat de carpeta: {e}")
+
+    def delete_folder_chat_history(self, folder_path: str) -> None:
+        """Elimina el historial de chat de carpeta del disco."""
+        path = self.clases_dir / folder_path / "folder_chat_historial.json"
+        if path.exists():
+            try:
+                path.unlink()
+            except Exception as e:
+                logger.warning(f"Error al eliminar historial de chat de carpeta: {e}")
+
+    def get_folder_cache_name(self, folder_path: str) -> Optional[str]:
+        """Lee el nombre del caché de Gemini para el chat de carpeta."""
+        path = self.clases_dir / folder_path / "folder_gemini_cache.txt"
+        if not path.exists():
+            return None
+        content = path.read_text(encoding="utf-8").strip()
+        return content if content else None
+
+    def save_folder_cache_name(self, folder_path: str, cache_name: str) -> None:
+        """Guarda el nombre del caché de Gemini para el chat de carpeta."""
+        path = self.clases_dir / folder_path / "folder_gemini_cache.txt"
+        path.write_text(cache_name, encoding="utf-8")
+
     def delete_class(self, class_id: str) -> bool:
         class_folder = self.clases_dir / class_id
         if not class_folder.exists():

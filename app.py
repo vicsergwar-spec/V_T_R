@@ -769,6 +769,129 @@ def clear_chat(class_id):
     })
 
 
+# ============== RUTAS DE CHAT DE CARPETA ==============
+
+@app.route('/api/folder-chat/<path:folder_path>/start', methods=['POST'])
+def start_folder_chat(folder_path):
+    """Inicia (o restaura) una sesión de chat para una carpeta completa."""
+    if not gemini_service:
+        return jsonify({"error": "Gemini API no está configurado"}), 500
+
+    classes_content = file_manager.get_folder_all_content(folder_path)
+    if not classes_content:
+        return jsonify({"error": "No se encontraron clases en esta carpeta"}), 404
+
+    folder_name = folder_path.split("/")[-1].replace("_", " ")
+
+    saved_history = file_manager.get_folder_chat_history(folder_path) or []
+    saved_cache_name = file_manager.get_folder_cache_name(folder_path)
+
+    # Usamos folder_path como session key (prefijado para no colisionar con clases)
+    session_key = f"__folder__{folder_path}"
+
+    new_cache_name = gemini_service.start_folder_chat_session(
+        folder_id=session_key,
+        folder_name=folder_name,
+        classes_content=classes_content,
+        history=saved_history,
+        cached_content_name=saved_cache_name,
+    )
+
+    if new_cache_name and new_cache_name != saved_cache_name:
+        file_manager.save_folder_cache_name(folder_path, new_cache_name)
+
+    return jsonify({
+        "success": True,
+        "message": "Sesión de chat de carpeta iniciada",
+        "folder_path": folder_path,
+        "class_count": len(classes_content),
+        "restored_messages": len(saved_history),
+        "cached": new_cache_name is not None,
+    })
+
+
+@app.route('/api/folder-chat/<path:folder_path>/message', methods=['POST'])
+def send_folder_chat_message(folder_path):
+    """Envía un mensaje en el chat general de una carpeta."""
+    if not gemini_service:
+        return jsonify({"error": "Gemini API no está configurado"}), 500
+
+    data = request.get_json()
+    if not data or 'message' not in data:
+        return jsonify({"error": "Se requiere un mensaje"}), 400
+
+    user_message = data['message'].strip()
+    if not user_message:
+        return jsonify({"error": "El mensaje no puede estar vacío"}), 400
+
+    session_key = f"__folder__{folder_path}"
+
+    try:
+        # Si no hay sesión activa, restaurar desde disco
+        if session_key not in gemini_service.chat_sessions:
+            classes_content = file_manager.get_folder_all_content(folder_path)
+            if not classes_content:
+                return jsonify({"error": "No se encontraron clases en esta carpeta"}), 404
+
+            folder_name = folder_path.split("/")[-1].replace("_", " ")
+            saved_history = file_manager.get_folder_chat_history(folder_path) or []
+            saved_cache_name = file_manager.get_folder_cache_name(folder_path)
+
+            new_cache_name = gemini_service.start_folder_chat_session(
+                folder_id=session_key,
+                folder_name=folder_name,
+                classes_content=classes_content,
+                history=saved_history,
+                cached_content_name=saved_cache_name,
+            )
+            if new_cache_name and new_cache_name != saved_cache_name:
+                file_manager.save_folder_cache_name(folder_path, new_cache_name)
+
+        response = gemini_service.chat(session_key, user_message)
+
+        updated_history = gemini_service.get_chat_history(session_key)
+        file_manager.save_folder_chat_history(folder_path, updated_history)
+
+        return jsonify({
+            "success": True,
+            "response": response,
+            "folder_path": folder_path,
+        })
+
+    except Exception as e:
+        logger.error(f"Error en chat de carpeta: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/folder-chat/<path:folder_path>/history', methods=['GET'])
+def get_folder_chat_history_route(folder_path):
+    """Obtiene el historial del chat general de una carpeta."""
+    if not gemini_service:
+        return jsonify({"error": "Gemini API no está configurado"}), 500
+
+    session_key = f"__folder__{folder_path}"
+
+    if session_key in gemini_service.chat_sessions:
+        history = gemini_service.get_chat_history(session_key)
+    else:
+        history = file_manager.get_folder_chat_history(folder_path) or []
+
+    return jsonify({"folder_path": folder_path, "history": history})
+
+
+@app.route('/api/folder-chat/<path:folder_path>/clear', methods=['POST'])
+def clear_folder_chat(folder_path):
+    """Limpia el historial del chat general de una carpeta."""
+    if not gemini_service:
+        return jsonify({"error": "Gemini API no está configurado"}), 500
+
+    session_key = f"__folder__{folder_path}"
+    gemini_service.clear_chat_history(session_key)
+    file_manager.delete_folder_chat_history(folder_path)
+
+    return jsonify({"success": True, "message": "Historial de chat de carpeta limpiado"})
+
+
 # ============== MANEJO DE ERRORES ==============
 
 @app.errorhandler(413)

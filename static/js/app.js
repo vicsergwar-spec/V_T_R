@@ -11,6 +11,7 @@ const state = {
     currentSection: 'upload',
     currentClass: null,
     currentTranscriptionSegments: null,
+    currentFolder: null,   // {path, name, classCount}
     classes: [],
     collapsedFolders: new Set(),
     queue: [],          // [{file, status:'pending'|'processing'|'done'|'error', error:''}]
@@ -78,11 +79,22 @@ const elements = {
     createFolderBtn: document.getElementById('createFolderBtn'),
     cancelFolderBtn: document.getElementById('cancelFolderBtn'),
 
-    // Chat
+    // Chat de clase
     chatMessages: document.getElementById('chatMessages'),
     chatInput: document.getElementById('chatInput'),
     sendChatBtn: document.getElementById('sendChatBtn'),
     clearChatBtn: document.getElementById('clearChatBtn'),
+
+    // Chat de carpeta
+    folderChatSection: document.getElementById('folder-chat-section'),
+    folderChatBackBtn: document.getElementById('folderChatBackBtn'),
+    folderChatTitle: document.getElementById('folderChatTitle'),
+    folderChatSubtitle: document.getElementById('folderChatSubtitle'),
+    folderChatClassesBadge: document.getElementById('folderChatClassesBadge'),
+    folderChatMessages: document.getElementById('folderChatMessages'),
+    folderChatInput: document.getElementById('folderChatInput'),
+    sendFolderChatBtn: document.getElementById('sendFolderChatBtn'),
+    clearFolderChatBtn: document.getElementById('clearFolderChatBtn'),
 
     // Modal confirmar
     confirmModal: document.getElementById('confirmModal'),
@@ -115,6 +127,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initUpload();
     initDetail();
     initChat();
+    initFolderChat();
     initModal();
     initRenameModal();
     initLogs();
@@ -757,7 +770,15 @@ function renderFolderNode(node, depth) {
         <span class="folder-section-name">${escapeHtml(childNode.name)}</span>
         <span class="folder-class-count">${total}</span>
     </div>
-    <svg class="folder-toggle-arrow${isCollapsed ? ' collapsed' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+    <div class="folder-section-right">
+        <button class="btn-folder-chat" data-folderpath="${escapeHtml(childNode.path)}" data-foldername="${escapeHtml(childNode.name)}" data-classcount="${total}" title="Chat general de carpeta">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+            <span>Chat</span>
+        </button>
+        <svg class="folder-toggle-arrow${isCollapsed ? ' collapsed' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+    </div>
 </div>
 <div class="folder-section-content${isCollapsed ? ' hidden' : ''}" id="${folderId}">
     ${childNode.classes.length > 0 ? '<div class="classes-group">' + childNode.classes.map(renderClassCard).join('') + '</div>' : ''}
@@ -791,8 +812,20 @@ function attachClassCardListeners() {
         });
     });
 
+    // Botones de chat de carpeta
+    document.querySelectorAll('.btn-folder-chat').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const folderPath = btn.dataset.folderpath;
+            const folderName = btn.dataset.foldername;
+            const classCount = parseInt(btn.dataset.classcount, 10);
+            showFolderChat(folderPath, folderName, classCount);
+        });
+    });
+
     document.querySelectorAll('.folder-section-header').forEach(header => {
-        header.addEventListener('click', () => {
+        header.addEventListener('click', (e) => {
+            if (e.target.closest('.btn-folder-chat')) return;
             const folderId = header.dataset.folderid;
             const folderPath = header.dataset.folderpath;
             const content = document.getElementById(folderId);
@@ -1216,6 +1249,200 @@ function resetChat() {
         </div>
     `;
     elements.chatInput.value = '';
+}
+
+// ============================================
+// Chat General de Carpeta
+// ============================================
+
+function initFolderChat() {
+    elements.folderChatBackBtn.addEventListener('click', () => navigateTo('classes'));
+
+    elements.sendFolderChatBtn.addEventListener('click', sendFolderChatMessage);
+
+    elements.folderChatInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendFolderChatMessage();
+        }
+    });
+
+    elements.folderChatInput.addEventListener('input', () => {
+        elements.folderChatInput.style.height = 'auto';
+        elements.folderChatInput.style.height = Math.min(elements.folderChatInput.scrollHeight, 150) + 'px';
+    });
+
+    elements.clearFolderChatBtn.addEventListener('click', clearFolderChat);
+}
+
+async function showFolderChat(folderPath, folderName, classCount) {
+    state.currentFolder = { path: folderPath, name: folderName, classCount };
+
+    // Actualizar UI del header
+    elements.folderChatTitle.textContent = folderName.replace(/_/g, ' ');
+    elements.folderChatSubtitle.textContent = `${classCount} clase${classCount !== 1 ? 's' : ''} en esta carpeta`;
+
+    // Badge informativo
+    elements.folderChatClassesBadge.innerHTML = `
+        <div class="folder-chat-badge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+            </svg>
+            <span>Carpeta: <strong>${escapeHtml(folderName.replace(/_/g, ' '))}</strong></span>
+            <span class="badge-sep">·</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+            </svg>
+            <span>${classCount} clase${classCount !== 1 ? 's' : ''} disponibles</span>
+            <span class="badge-sep">·</span>
+            <span class="badge-loading" id="folderChatLoadingBadge">Cargando conocimiento...</span>
+        </div>`;
+
+    // Mostrar sección de chat de carpeta
+    elements.sections.forEach(s => s.classList.remove('active'));
+    elements.folderChatSection.classList.add('active');
+    elements.navItems.forEach(item => item.classList.remove('active'));
+
+    // Resetear y cargar el chat
+    resetFolderChat();
+    await loadFolderChatSession(folderPath);
+}
+
+async function loadFolderChatSession(folderPath) {
+    const loadingBadge = document.getElementById('folderChatLoadingBadge');
+    try {
+        // Iniciar sesión en el servidor
+        const startRes = await fetch(`/api/folder-chat/${folderPath}/start`, { method: 'POST' });
+        const startData = await startRes.json();
+
+        if (!startRes.ok) {
+            throw new Error(startData.error || 'Error al iniciar sesión de carpeta');
+        }
+
+        // Actualizar badge con número real de clases cargadas
+        if (loadingBadge) {
+            loadingBadge.textContent = startData.cached
+                ? `✓ Listo (caché activo)`
+                : `✓ Listo`;
+            loadingBadge.classList.add('badge-ready');
+        }
+
+        // Cargar historial guardado
+        const histRes = await fetch(`/api/folder-chat/${folderPath}/history`);
+        const histData = await histRes.json();
+        const history = histData.history || [];
+
+        if (history.length > 0) {
+            elements.folderChatMessages.innerHTML = '';
+            history.forEach(msg => addFolderChatMessage(
+                msg.role === 'model' ? 'assistant' : msg.role,
+                msg.content
+            ));
+        }
+
+    } catch (error) {
+        console.error('Error cargando chat de carpeta:', error);
+        if (loadingBadge) {
+            loadingBadge.textContent = '⚠ Error al cargar';
+            loadingBadge.style.color = 'var(--error)';
+        }
+        showToast('error', 'Error', error.message || 'No se pudo cargar el chat de carpeta');
+    }
+}
+
+async function sendFolderChatMessage() {
+    const message = elements.folderChatInput.value.trim();
+    if (!message || !state.currentFolder) return;
+
+    elements.folderChatInput.value = '';
+    elements.folderChatInput.style.height = 'auto';
+
+    const welcome = elements.folderChatMessages.querySelector('.chat-welcome');
+    if (welcome) welcome.style.display = 'none';
+
+    addFolderChatMessage('user', message);
+    elements.sendFolderChatBtn.disabled = true;
+
+    const typingId = addFolderTypingIndicator();
+
+    try {
+        const res = await fetch(`/api/folder-chat/${state.currentFolder.path}/message`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message })
+        });
+        const data = await res.json();
+
+        removeFolderTypingIndicator(typingId);
+
+        if (data.success) {
+            addFolderChatMessage('assistant', data.response);
+        } else {
+            throw new Error(data.error || 'Error en el chat de carpeta');
+        }
+
+    } catch (error) {
+        removeFolderTypingIndicator(typingId);
+        console.error('Error en chat de carpeta:', error);
+        addFolderChatMessage('assistant', 'Lo siento, hubo un error al procesar tu pregunta. Por favor, intenta de nuevo.');
+    } finally {
+        elements.sendFolderChatBtn.disabled = false;
+        elements.folderChatInput.focus();
+    }
+}
+
+function addFolderChatMessage(role, content) {
+    const div = document.createElement('div');
+    div.className = `chat-message ${role}`;
+    if (role === 'assistant') {
+        div.innerHTML = parseMarkdown(content);
+    } else {
+        div.textContent = content;
+    }
+    elements.folderChatMessages.appendChild(div);
+    elements.folderChatMessages.scrollTop = elements.folderChatMessages.scrollHeight;
+}
+
+function addFolderTypingIndicator() {
+    const id = 'folder-typing-' + Date.now();
+    const div = document.createElement('div');
+    div.id = id;
+    div.className = 'chat-message assistant';
+    div.innerHTML = '<div class="spinner"></div>';
+    elements.folderChatMessages.appendChild(div);
+    elements.folderChatMessages.scrollTop = elements.folderChatMessages.scrollHeight;
+    return id;
+}
+
+function removeFolderTypingIndicator(id) {
+    const el = document.getElementById(id);
+    if (el) el.remove();
+}
+
+async function clearFolderChat() {
+    if (!state.currentFolder) return;
+    try {
+        await fetch(`/api/folder-chat/${state.currentFolder.path}/clear`, { method: 'POST' });
+        resetFolderChat();
+        showToast('success', 'Chat limpiado', 'El historial de la carpeta ha sido borrado');
+    } catch (error) {
+        console.error('Error limpiando chat de carpeta:', error);
+        showToast('error', 'Error', 'No se pudo limpiar el chat');
+    }
+}
+
+function resetFolderChat() {
+    elements.folderChatMessages.innerHTML = `
+        <div class="chat-welcome" id="folderChatWelcome">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                <path d="M12 11v6M9 14h6" stroke-width="1.5"/>
+            </svg>
+            <h3>Chat General de Carpeta</h3>
+            <p>Pregunta sobre cualquier clase de esta carpeta. La IA conoce las transcripciones, resúmenes y slides de todas las clases.</p>
+        </div>`;
+    elements.folderChatInput.value = '';
 }
 
 // ============================================

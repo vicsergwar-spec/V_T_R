@@ -194,6 +194,56 @@
                 </div>
             </section>
 
+            <!-- Sección: Chat General de Carpeta -->
+            <section class="section" id="folder-chat-section">
+                <div class="section-header detail-header">
+                    <button class="btn-back" id="folderChatBackBtn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="19" y1="12" x2="5" y2="12"/>
+                            <polyline points="12 19 5 12 12 5"/>
+                        </svg>
+                        <span>Volver</span>
+                    </button>
+                    <div class="folder-chat-header-info">
+                        <h2 id="folderChatTitle">Carpeta</h2>
+                        <span class="folder-chat-subtitle" id="folderChatSubtitle"></span>
+                    </div>
+                </div>
+
+                <div class="folder-chat-classes-badge" id="folderChatClassesBadge"></div>
+
+                <div class="chat-container folder-chat-main">
+                    <div class="chat-messages" id="folderChatMessages">
+                        <div class="chat-welcome" id="folderChatWelcome">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                                <path d="M12 11v6M9 14h6" stroke-width="1.5"/>
+                            </svg>
+                            <h3>Chat General de Carpeta</h3>
+                            <p>Pregunta sobre cualquier clase de esta carpeta. La IA conoce las transcripciones, resúmenes y slides de todas las clases.</p>
+                        </div>
+                    </div>
+                    <div class="chat-input-container">
+                        <button class="btn-clear-chat" id="clearFolderChatBtn" title="Limpiar historial">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="3 6 5 6 21 6"/>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                            </svg>
+                            <span>Limpiar Chat</span>
+                        </button>
+                        <div class="chat-input-wrapper">
+                            <textarea id="folderChatInput" placeholder="Pregunta sobre cualquier clase de esta carpeta..." rows="1"></textarea>
+                            <button class="btn-send" id="sendFolderChatBtn">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="22" y1="2" x2="11" y2="13"/>
+                                    <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             <!-- Sección: Detalle de Clase -->
             <section class="section" id="detail-section">
                 <div class="section-header detail-header">
