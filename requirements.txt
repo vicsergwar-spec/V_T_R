@@ -30,3 +30,6 @@ werkzeug>=3.0.0
 
 # Procesamiento de imágenes (para SlideExtractor)
 Pillow>=10.2.0
+
+# Generación de PDF para descarga de slides
+fpdf2>=2.7.9
