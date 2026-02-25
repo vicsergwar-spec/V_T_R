@@ -13,7 +13,7 @@ const state = {
     currentTranscriptionSegments: null,
     classes: [],
     collapsedFolders: new Set(),
-    selectedFile: null,
+    queue: [],          // [{file, status:'pending'|'processing'|'done'|'error', error:''}]
     isProcessing: false,
     chatHistory: [],
     openaiConfigured: false
@@ -37,10 +37,9 @@ const elements = {
     // Upload
     uploadArea: document.getElementById('uploadArea'),
     fileInput: document.getElementById('fileInput'),
-    fileSelected: document.getElementById('fileSelected'),
-    fileName: document.getElementById('fileName'),
-    fileSize: document.getElementById('fileSize'),
-    removeFile: document.getElementById('removeFile'),
+    queueList: document.getElementById('queueList'),
+    queueCounter: document.getElementById('queueCounter'),
+    shutdownCheckbox: document.getElementById('shutdownCheckbox'),
     modelSelect: document.getElementById('modelSelect'),
     processBtn: document.getElementById('processBtn'),
     progressContainer: document.getElementById('progressContainer'),
@@ -206,49 +205,36 @@ async function checkSystemStatus() {
 }
 
 // ============================================
-// Upload de Video
+// Upload de Video — Cola múltiple
 // ============================================
 
 function initUpload() {
-    // Click en area de upload
-    elements.uploadArea.addEventListener('click', () => {
-        elements.fileInput.click();
-    });
+    elements.uploadArea.addEventListener('click', () => elements.fileInput.click());
 
-    // Cambio de archivo
     elements.fileInput.addEventListener('change', (e) => {
-        handleFileSelect(e.target.files[0]);
+        addFilesToQueue(e.target.files);
+        elements.fileInput.value = ''; // permite re-seleccionar los mismos archivos
     });
 
-    // Drag and drop
     elements.uploadArea.addEventListener('dragover', (e) => {
         e.preventDefault();
         elements.uploadArea.classList.add('drag-over');
     });
-
     elements.uploadArea.addEventListener('dragleave', () => {
         elements.uploadArea.classList.remove('drag-over');
     });
-
     elements.uploadArea.addEventListener('drop', (e) => {
         e.preventDefault();
         elements.uploadArea.classList.remove('drag-over');
-        const file = e.dataTransfer.files[0];
-        if (file && file.type.startsWith('video/')) {
-            handleFileSelect(file);
-        } else {
-            showToast('error', 'Archivo inválido', 'Por favor selecciona un archivo de video');
+        const videos = [...e.dataTransfer.files].filter(f => f.type.startsWith('video/'));
+        if (videos.length === 0) {
+            showToast('error', 'Sin videos', 'Arrastra archivos de video');
+            return;
         }
+        addFilesToQueue(videos);
     });
 
-    // Quitar archivo
-    elements.removeFile.addEventListener('click', (e) => {
-        e.stopPropagation();
-        clearFileSelection();
-    });
-
-    // Procesar
-    elements.processBtn.addEventListener('click', processVideo);
+    elements.processBtn.addEventListener('click', processQueue);
 
     // Nueva carpeta
     elements.newFolderBtn.addEventListener('click', () => {
@@ -265,121 +251,203 @@ function initUpload() {
         if (e.key === 'Escape') elements.cancelFolderBtn.click();
     });
 
-    // Cargar carpetas al iniciar
     loadFolders();
 }
 
-function handleFileSelect(file) {
-    if (!file) return;
+// ── Cola ──────────────────────────────────────
 
-    state.selectedFile = file;
-
-    // Mostrar información del archivo
-    elements.fileName.textContent = file.name;
-    elements.fileSize.textContent = formatFileSize(file.size);
-
-    elements.uploadArea.style.display = 'none';
-    elements.fileSelected.style.display = 'flex';
-    elements.processBtn.disabled = false;
+function addFilesToQueue(files) {
+    for (const f of [...files]) {
+        if (!f.type.startsWith('video/')) continue;
+        // evitar duplicados con mismo nombre en estado pendiente
+        if (state.queue.find(q => q.file.name === f.name && q.status === 'pending')) continue;
+        state.queue.push({ file: f, status: 'pending', error: '' });
+    }
+    renderQueue();
+    updateProcessBtn();
 }
 
-function clearFileSelection() {
-    state.selectedFile = null;
-    elements.fileInput.value = '';
-
-    elements.uploadArea.style.display = 'block';
-    elements.fileSelected.style.display = 'none';
-    elements.processBtn.disabled = true;
+function removeFromQueue(index) {
+    if (state.queue[index]?.status === 'pending') {
+        state.queue.splice(index, 1);
+        renderQueue();
+        updateProcessBtn();
+    }
 }
 
-async function processVideo() {
-    if (!state.selectedFile || state.isProcessing) return;
+function renderQueue() {
+    const list = elements.queueList;
+    if (state.queue.length === 0) {
+        list.style.display = 'none';
+        return;
+    }
+    list.style.display = 'flex';
+
+    const icons   = { pending: '⏳', processing: '⚙️', done: '✓', error: '✕' };
+    const labels  = { pending: 'En espera', processing: 'Procesando...', done: 'Completado' };
+
+    list.innerHTML = '';
+    state.queue.forEach((item, i) => {
+        const label = item.status === 'error' ? (item.error || 'Error') : labels[item.status];
+        const removeBtn = item.status === 'pending'
+            ? `<button class="queue-remove" data-idx="${i}" title="Quitar">
+                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15">
+                   <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                 </svg></button>`
+            : '';
+        const div = document.createElement('div');
+        div.className = `queue-item ${item.status}`;
+        div.innerHTML = `
+            <div class="queue-item-icon">${icons[item.status]}</div>
+            <div class="queue-item-info">
+                <div class="queue-item-name">${item.file.name}</div>
+                <div class="queue-item-meta">${formatFileSize(item.file.size)} · <span class="status-${item.status}">${label}</span></div>
+            </div>
+            ${removeBtn}`;
+        list.appendChild(div);
+    });
+
+    list.querySelectorAll('.queue-remove').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            removeFromQueue(parseInt(btn.dataset.idx));
+        });
+    });
+}
+
+function updateProcessBtn() {
+    const pending = state.queue.filter(q => q.status === 'pending').length;
+    elements.processBtn.disabled = pending === 0 || state.isProcessing;
+    elements.processBtn.querySelector('span').textContent =
+        pending <= 1 ? (pending === 1 ? 'Procesar 1 video' : 'Procesar') : `Procesar ${pending} videos`;
+}
+
+// ── Procesamiento ─────────────────────────────
+
+async function processQueue() {
+    const pending = state.queue.filter(q => q.status === 'pending');
+    if (pending.length === 0 || state.isProcessing) return;
 
     state.isProcessing = true;
     elements.processBtn.disabled = true;
-
-    // Mostrar progreso
     elements.progressContainer.style.display = 'block';
-    updateProgress(0, 'Subiendo video...');
 
+    const total = pending.length;
+    let num = 0;
+
+    if (total > 1) {
+        elements.queueCounter.style.display = 'block';
+    }
+
+    for (let i = 0; i < state.queue.length; i++) {
+        const item = state.queue[i];
+        if (item.status !== 'pending') continue;
+
+        num++;
+        item.status = 'processing';
+        renderQueue();
+
+        if (total > 1) {
+            elements.queueCounter.textContent = `Video ${num} de ${total}`;
+        }
+
+        updateProgress(0, 'Subiendo video...');
+
+        try {
+            await processOneVideo(item, num, total);
+            item.status = 'done';
+        } catch (err) {
+            item.status = 'error';
+            item.error = err.message;
+            showToast('error', `Error: ${item.file.name}`, err.message);
+        }
+        renderQueue();
+    }
+
+    state.isProcessing = false;
+    elements.queueCounter.style.display = 'none';
+    updateProcessBtn();
+    loadClasses();
+
+    const doneCount  = state.queue.filter(q => q.status === 'done').length;
+    const errorCount = state.queue.filter(q => q.status === 'error').length;
+
+    if (doneCount > 0) {
+        updateProgress(100, `¡${doneCount} clase${doneCount > 1 ? 's' : ''} creada${doneCount > 1 ? 's' : ''}!`);
+        if (total === 1 && doneCount === 1) {
+            // Si solo había un video, ir directo a la clase
+            const last = state.queue.find(q => q.status === 'done');
+            if (last?._classId) showClassDetail(last._classId);
+        }
+        if (errorCount === 0) {
+            setTimeout(() => {
+                state.queue = [];
+                renderQueue();
+                elements.progressContainer.style.display = 'none';
+                updateProgress(0, 'Preparando...');
+            }, 2500);
+        }
+    }
+
+    if (elements.shutdownCheckbox.checked) {
+        updateProgress(100, 'Apagando el equipo...');
+        await fetch('/api/shutdown', { method: 'POST' }).catch(() => {});
+    }
+}
+
+async function processOneVideo(item, currentNum, totalNum) {
     const formData = new FormData();
-    formData.append('video', state.selectedFile);
+    formData.append('video', item.file);
     formData.append('model', elements.modelSelect.value);
     formData.append('folder_path', elements.folderSelect.value);
 
+    const startTime = Date.now();
+
+    function elapsedStr() {
+        const sec = Math.floor((Date.now() - startTime) / 1000);
+        if (sec < 5) return '';
+        const mm = String(Math.floor(sec / 60)).padStart(2, '0');
+        const ss = String(sec % 60).padStart(2, '0');
+        return ` · ${mm}:${ss}`;
+    }
+
+    let statusInterval = null;
+
+    async function pollStatus() {
+        try {
+            const res = await fetch('/api/process/status');
+            const s = await res.json();
+            if (s.percent > 0) {
+                const detail = s.detail ? ` (${s.detail})` : '';
+                updateProgress(s.percent, s.step + detail + elapsedStr());
+            }
+        } catch (_) { /* servidor ocupado */ }
+    }
+
+    statusInterval = setInterval(pollStatus, 1500);
+    pollStatus();
+
     try {
-        // Polling real del estado del servidor cada 1.5s
-        const startTime = Date.now();
-
-        function elapsedStr() {
-            const sec = Math.floor((Date.now() - startTime) / 1000);
-            if (sec < 5) return '';
-            const mm = String(Math.floor(sec / 60)).padStart(2, '0');
-            const ss = String(sec % 60).padStart(2, '0');
-            return ` · ${mm}:${ss}`;
-        }
-
-        async function pollStatus() {
-            try {
-                const res = await fetch('/api/process/status');
-                const s = await res.json();
-                if (s.percent > 0) {
-                    const detail = s.detail ? ` (${s.detail})` : '';
-                    updateProgress(s.percent, s.step + detail + elapsedStr());
-                }
-            } catch (_) { /* servidor ocupado, se reintenta */ }
-        }
-
-        const statusInterval = setInterval(pollStatus, 1500);
-        pollStatus(); // llamada inmediata
-
-        const response = await fetch('/api/process', {
-            method: 'POST',
-            body: formData
-        });
-
+        const response = await fetch('/api/process', { method: 'POST', body: formData });
         clearInterval(statusInterval);
 
         const data = await response.json();
 
         if (response.ok && data.success) {
-            updateProgress(100, '¡Procesamiento completado!');
-
-            setTimeout(() => {
-                showToast('success', 'Video procesado', `Clase guardada: ${data.class.name}`);
-                clearFileSelection();
-                elements.progressContainer.style.display = 'none';
-                updateProgress(0, 'Preparando...');
-
-                // Ir a la clase creada
-                loadClasses();
-                showClassDetail(data.class.id);
-            }, 1000);
-
-        } else if (data.gpu_failed && data.openai_available) {
-            // La GPU falló y OpenAI está disponible: ofrecer al usuario la opción de reintentar
-            elements.progressContainer.style.display = 'none';
-            showConfirmModal(
-                'Fallo en la tarjeta gráfica',
-                '❌ La transcripción con la GPU falló.\n\n¿Deseas intentarlo usando OpenAI API (en la nube)?',
-                () => {
-                    elements.modelSelect.value = 'openai';
-                    processVideo();
-                }
-            );
-
-        } else {
-            throw new Error(data.error || 'Error desconocido');
+            item._classId = data.class?.id;
+            showToast('success', 'Clase creada', data.class.name);
+            return;
         }
 
-    } catch (error) {
+        if (data.gpu_failed && data.openai_available) {
+            throw new Error('Fallo en GPU. Cambia el modelo a "OpenAI API" e inténtalo de nuevo.');
+        }
+
+        throw new Error(data.error || 'Error desconocido');
+
+    } catch (err) {
         clearInterval(statusInterval);
-        console.error('Error processing video:', error);
-        showToast('error', 'Error al procesar', error.message);
-        elements.progressContainer.style.display = 'none';
-    } finally {
-        state.isProcessing = false;
-        elements.processBtn.disabled = !state.selectedFile;
+        throw err;
     }
 }
 

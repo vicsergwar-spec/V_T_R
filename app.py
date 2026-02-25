@@ -4,6 +4,8 @@ Servidor Flask Principal
 """
 import os
 import time
+import threading
+import subprocess
 import logging
 import collections
 from pathlib import Path
@@ -417,6 +419,18 @@ def process_video():
 def get_process_status():
     """Devuelve el paso actual del procesamiento para la barra de progreso."""
     return jsonify(_proc_status)
+
+
+@app.route('/api/shutdown', methods=['POST'])
+def shutdown_machine():
+    """Apaga el equipo 3 segundos después de responder (da tiempo al frontend)."""
+    def do_shutdown():
+        time.sleep(3)
+        logger.info("Apagando el equipo por solicitud del usuario...")
+        subprocess.run(['shutdown', '-h', 'now'], check=False)
+
+    threading.Thread(target=do_shutdown, daemon=True).start()
+    return jsonify({"ok": True, "message": "El equipo se apagará en breve."})
 
 
 # ============== LOGS EN MEMORIA ==============

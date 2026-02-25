@@ -58,8 +58,8 @@
             <!-- Sección: Subir Video -->
             <section class="section active" id="upload-section">
                 <div class="section-header">
-                    <h2>Procesar Video de Clase</h2>
-                    <p>Sube un video y obtén la transcripción y resumen automáticamente</p>
+                    <h2>Procesar Videos de Clase</h2>
+                    <p>Sube uno o varios videos y obtén la transcripción y resumen automáticamente</p>
                 </div>
 
                 <div class="upload-container">
@@ -71,29 +71,13 @@
                                 <line x1="17" y1="8" x2="17" y2="16"/>
                             </svg>
                         </div>
-                        <p class="upload-text">Arrastra tu video aquí o haz clic para seleccionar</p>
-                        <p class="upload-hint">Formatos soportados: MP4, MKV, AVI, MOV, WEBM</p>
-                        <input type="file" id="fileInput" accept="video/*" hidden>
+                        <p class="upload-text">Arrastra tus videos aquí o haz clic para seleccionar</p>
+                        <p class="upload-hint">Puedes seleccionar varios videos a la vez · MP4, MKV, AVI, MOV, WEBM</p>
+                        <input type="file" id="fileInput" accept="video/*" multiple hidden>
                     </div>
 
-                    <div class="file-selected" id="fileSelected" style="display: none;">
-                        <div class="file-info">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <polygon points="23 7 16 12 23 17 23 7"/>
-                                <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
-                            </svg>
-                            <div class="file-details">
-                                <span class="file-name" id="fileName"></span>
-                                <span class="file-size" id="fileSize"></span>
-                            </div>
-                        </div>
-                        <button class="btn-remove" id="removeFile" title="Quitar archivo">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <line x1="18" y1="6" x2="6" y2="18"/>
-                                <line x1="6" y1="6" x2="18" y2="18"/>
-                            </svg>
-                        </button>
-                    </div>
+                    <!-- Cola de videos -->
+                    <div class="queue-list" id="queueList" style="display:none"></div>
 
                     <div class="options-row">
                         <div class="option-group">
@@ -135,15 +119,22 @@
                         </div>
                     </div>
 
+                    <!-- Opción: apagar al terminar -->
+                    <div class="shutdown-row">
+                        <input type="checkbox" id="shutdownCheckbox">
+                        <label for="shutdownCheckbox">Apagar el equipo al terminar</label>
+                    </div>
+
                     <button class="btn-primary btn-process" id="processBtn" disabled>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polygon points="5 3 19 12 5 21 5 3"/>
                         </svg>
-                        <span>Procesar Video</span>
+                        <span>Procesar</span>
                     </button>
 
                     <!-- Barra de progreso -->
                     <div class="progress-container" id="progressContainer" style="display: none;">
+                        <div class="queue-counter" id="queueCounter" style="display:none"></div>
                         <div class="progress-bar">
                             <div class="progress-fill" id="progressFill"></div>
                         </div>
