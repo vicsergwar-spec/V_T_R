@@ -1,12 +1,10 @@
 """
 Servicio de transcripción usando faster-whisper (local con CUDA) y OpenAI API como respaldo
 """
-import json
 import logging
-from pathlib import Path
 from typing import Optional
 
-logging.basicConfig(level=logging.INFO)
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -231,56 +229,6 @@ class Transcriber:
             return self.transcribe_openai_api(audio_path, progress_callback)
         else:
             return self.transcribe_local(audio_path, progress_callback=progress_callback)
-
-    def save_transcription_jsonl(self, segments: list, output_path: str) -> str:
-        """
-        Guarda la transcripción en formato JSONL.
-
-        Args:
-            segments: Lista de segmentos de transcripción
-            output_path: Ruta de salida
-
-        Returns:
-            Ruta del archivo guardado
-        """
-        output_path = Path(output_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        with open(output_path, "w", encoding="utf-8") as f:
-            for segment in segments:
-                f.write(json.dumps(segment, ensure_ascii=False) + "\n")
-
-        logger.info(f"Transcripción guardada en: {output_path}")
-        return str(output_path)
-
-    def load_transcription_jsonl(self, file_path: str) -> list:
-        """
-        Carga una transcripción desde un archivo JSONL.
-
-        Args:
-            file_path: Ruta al archivo JSONL
-
-        Returns:
-            Lista de segmentos
-        """
-        segments = []
-        with open(file_path, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip():
-                    segments.append(json.loads(line))
-        return segments
-
-    def get_full_text(self, segments: list) -> str:
-        """
-        Obtiene el texto completo de la transcripción.
-
-        Args:
-            segments: Lista de segmentos
-
-        Returns:
-            Texto completo
-        """
-        return " ".join(segment["texto"] for segment in segments)
 
     @staticmethod
     def _format_timestamp(seconds: float) -> str:

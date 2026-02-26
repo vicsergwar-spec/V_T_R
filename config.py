@@ -57,7 +57,6 @@ DEFAULT_WHISPER_MODEL = "medium"
 # Configuración de Gemini
 # Para cambiar de modelo: pon aquí el ID exacto que ves en Google AI Studio
 GEMINI_MODEL = "gemini-3-flash-preview"
-GEMINI_MODEL_PRO = "gemini-3-flash-preview"
 
 # Configuración de FFmpeg
 AUDIO_FORMAT = "wav"

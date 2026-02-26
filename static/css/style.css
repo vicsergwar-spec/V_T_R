@@ -201,6 +201,40 @@ body {
     box-shadow: 0 0 8px var(--error);
 }
 
+/* ── VRAM bar ─────────────────────────────── */
+.vram-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+}
+
+.vram-bar-wrap {
+    width: 100%;
+    height: 5px;
+    background: var(--bg-tertiary);
+    border-radius: 3px;
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.vram-bar-fill {
+    display: block;
+    height: 100%;
+    width: 0%;
+    border-radius: 3px;
+    background: var(--accent-primary);
+    transition: width 0.6s ease, background 0.4s ease;
+}
+
+.vram-bar-fill.vram-warn  { background: var(--warning); }
+.vram-bar-fill.vram-crit  { background: var(--error); }
+
+.vram-text {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
 /* ============================================
    Contenido Principal
    ============================================ */

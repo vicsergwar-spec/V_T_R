@@ -521,9 +521,6 @@ class SlideExtractor:
         except Exception:
             return 1280, 720
 
-    def _get_image_height(self, image_path: str) -> int:
-        return self._get_image_size(image_path)[1]
-
     def _detect_visual_regions(self, text_blocks: list[dict], img_height: int) -> list[dict]:
         """Detecta huecos grandes entre bloques de texto → posibles diagramas."""
         if not text_blocks:
