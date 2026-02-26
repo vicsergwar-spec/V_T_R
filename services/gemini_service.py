@@ -311,6 +311,8 @@ INSTRUCCIONES:
     def clear_chat_history(self, class_id: str) -> bool:
         """
         Limpia el historial de chat de una clase.
+        Elimina la sesión completa para que se re-inicialice limpia en el
+        próximo mensaje (el objeto chat del SDK mantiene historial interno).
 
         Args:
             class_id: Identificador de la clase
@@ -319,8 +321,8 @@ INSTRUCCIONES:
             True si se limpió exitosamente
         """
         if class_id in self.chat_sessions:
-            self.chat_sessions[class_id]["history"] = []
-            logger.info(f"Historial de chat limpiado para clase: {class_id}")
+            del self.chat_sessions[class_id]
+            logger.info(f"Sesión de chat eliminada para clase: {class_id}")
             return True
         return False
 

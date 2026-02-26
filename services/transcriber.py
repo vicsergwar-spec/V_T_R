@@ -237,25 +237,3 @@ class Transcriber:
         minutes = int((seconds % 3600) // 60)
         secs = seconds % 60
         return f"{hours:02d}:{minutes:02d}:{secs:06.3f}"
-
-    def get_gpu_info(self) -> dict:
-        """Obtiene información sobre la GPU disponible"""
-        if TORCH_AVAILABLE and torch.cuda.is_available():
-            return {
-                "available": True,
-                "device": self.device,
-                "name": torch.cuda.get_device_name(0),
-                "memory_total_gb":     torch.cuda.get_device_properties(0).total_memory / (1024**3),
-                "memory_allocated_gb": torch.cuda.memory_allocated(0) / (1024**3),
-                "memory_cached_gb":    torch.cuda.memory_reserved(0) / (1024**3),
-            }
-        return {"available": False, "device": "cpu"}
-
-    def unload_model(self) -> None:
-        """Descarga el modelo de memoria para liberar VRAM"""
-        if self.model is not None:
-            del self.model
-            self.model = None
-            if TORCH_AVAILABLE and torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            logger.info("Modelo faster-whisper descargado de memoria")

@@ -59,7 +59,6 @@ DEFAULT_WHISPER_MODEL = "medium"
 GEMINI_MODEL = "gemini-3-flash-preview"
 
 # Configuración de FFmpeg
-AUDIO_FORMAT = "wav"
 AUDIO_SAMPLE_RATE = 16000  # 16kHz es óptimo para Whisper
 
 # Formatos de video soportados
