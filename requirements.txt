@@ -33,6 +33,3 @@ Pillow>=10.2.0
 
 # Generación de PDF para descarga de slides
 fpdf2>=2.7.9
-
-# Ventana nativa de escritorio (sin necesidad de Chrome/Edge)
-pywebview>=4.4.1

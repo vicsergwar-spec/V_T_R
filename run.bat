@@ -55,6 +55,26 @@ echo  [OK] Dependencias listas
 echo.
 
 :: ─────────────────────────────────────────────
+:: 3b. Intentar instalar ventana nativa (pywebview)
+::     Se instala con --prefer-binary para evitar
+::     compilar pythonnet (requiere .NET SDK).
+::     Si falla, el programa usara el navegador.
+:: ─────────────────────────────────────────────
+python -m pip show pywebview >nul 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    echo  Instalando ventana nativa ^(pywebview^)...
+    python -m pip install pywebview --prefer-binary -q >nul 2>&1
+    if %ERRORLEVEL% EQU 0 (
+        echo  [OK] Ventana nativa disponible
+    ) else (
+        echo  [!] Ventana nativa no disponible — se abrira el navegador automaticamente
+    )
+) else (
+    echo  [OK] Ventana nativa ya instalada
+)
+echo.
+
+:: ─────────────────────────────────────────────
 :: 4. Verificar archivo .env
 :: ─────────────────────────────────────────────
 if not exist ".env" (
@@ -70,10 +90,11 @@ if not exist ".env" (
 echo  [3/3] Abriendo ventana de la aplicacion...
 echo.
 echo  =========================================
-echo   V_T_R se abre en ventana propia
-echo   (sin necesidad de Chrome ni Edge)
+echo   Abriendo V_T_R...
+echo   ^(ventana propia si pywebview esta OK,
+echo    navegador automatico si no^)
 echo.
-echo   Cierra la ventana para detener el programa
+echo   Cierra la ventana / presiona Ctrl+C para salir
 echo  =========================================
 echo.
 
