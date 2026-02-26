@@ -1444,7 +1444,7 @@ body {
     display: flex;
     flex-direction: column;
     gap: 14px;
-    max-height: 620px;
+    max-height: 70vh;
     overflow-y: auto;
     padding-right: 4px;
 }
@@ -1514,6 +1514,59 @@ body {
     margin: 0;
     line-height: 1.5;
     white-space: pre-wrap;
+}
+
+/* Documento IA de slides */
+.slides-document {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: 32px;
+    line-height: 1.8;
+}
+.slides-document h1 {
+    font-size: 1.75rem;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+.slides-document h2 {
+    font-size: 1.25rem;
+    color: var(--accent-light);
+    margin-top: 28px;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-color);
+}
+.slides-document h3 {
+    font-size: 1.1rem;
+    color: var(--text-primary);
+    margin-top: 20px;
+    margin-bottom: 8px;
+}
+.slides-document ul, .slides-document ol {
+    padding-left: 24px;
+    margin-bottom: 16px;
+}
+.slides-document li {
+    margin-bottom: 8px;
+}
+.slides-document p {
+    margin-bottom: 16px;
+}
+.slides-document strong {
+    color: var(--accent-light);
+}
+.slides-document em {
+    color: var(--text-secondary);
+    font-style: italic;
+}
+.slides-document code {
+    background: var(--bg-tertiary);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 0.9em;
 }
 
 /* Transcripción */

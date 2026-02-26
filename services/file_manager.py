@@ -95,11 +95,26 @@ class FileManager:
         logger.info(f"Slides guardados: {output_path}")
         return str(output_path)
 
+    def save_slides_document(self, content: str, class_folder: Path) -> str:
+        """Guarda el documento de slides generado por IA (optimizado para lectura y chat)."""
+        output_path = class_folder / "slides_document.md"
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        logger.info(f"Documento de slides guardado: {output_path}")
+        return str(output_path)
+
     def get_slides(self, class_id: str) -> Optional[str]:
         """Devuelve el contenido de slides si existe, o None."""
         slides_path = self.clases_dir / class_id / "slides.md"
         if slides_path.exists():
             return slides_path.read_text(encoding="utf-8")
+        return None
+
+    def get_slides_document(self, class_id: str) -> Optional[str]:
+        """Devuelve el documento de slides generado por IA, o None."""
+        doc_path = self.clases_dir / class_id / "slides_document.md"
+        if doc_path.exists():
+            return doc_path.read_text(encoding="utf-8")
         return None
 
     def save_video_to_temp(self, file_storage, filename: str) -> str:
@@ -252,7 +267,7 @@ class FileManager:
                 "name": cls["name"],
                 "transcription": self.get_transcription_text(cls["id"]) or "",
                 "summary": self.get_summary(cls["id"]) or "",
-                "slides": self.get_slides(cls["id"]) or "",
+                "slides": self.get_slides_document(cls["id"]) or self.get_slides(cls["id"]) or "",
             })
         return result
 

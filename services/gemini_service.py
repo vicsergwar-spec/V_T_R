@@ -152,6 +152,62 @@ INSTRUCCIONES ADICIONALES:
 No se pudo generar el resumen automáticamente. Por favor, revisa la transcripción directamente.
 """
 
+    def generate_slides_document(self, slides_raw: str, class_name: str) -> str:
+        """
+        Genera un documento de estudio estructurado a partir del contenido
+        en crudo de los slides (OCR + descripciones visuales).
+
+        Args:
+            slides_raw: Contenido de slides.md (formato ## Slide N [MM:SS])
+            class_name: Nombre de la clase
+
+        Returns:
+            Documento Markdown estructurado y optimizado para lectura y chat IA
+        """
+        if not slides_raw or not slides_raw.strip():
+            return ""
+
+        max_chars = 80000
+        if len(slides_raw) > max_chars:
+            slides_raw = slides_raw[:max_chars] + "\n\n[... contenido truncado ...]"
+
+        prompt = f"""Eres un asistente académico experto. Se te proporcionan los slides \
+extraídos automáticamente de un video de clase mediante OCR y análisis visual.
+
+CONTENIDO DE LOS SLIDES (datos en crudo):
+{slides_raw}
+
+Tu tarea es transformar estos datos en un **documento de estudio claro y bien estructurado** \
+en formato Markdown. Sigue estas reglas:
+
+1. **Organiza el contenido por temas**, NO por número de slide. Agrupa slides relacionados.
+2. **Limpia artefactos de OCR**: corrige errores tipográficos evidentes, elimina texto repetido \
+o fragmentos de interfaz (botones, menús, etc.).
+3. **Estructura con encabezados claros**: usa ## para secciones principales y ### para subsecciones.
+4. **Conserva TODO el contenido académico**: no omitas información. Si hay fórmulas, tablas, \
+diagramas o datos, inclúyelos con formato apropiado.
+5. **Descripciones visuales**: si un slide tenía un diagrama o gráfica (marcados con >), \
+intégralas como notas descriptivas con el formato: *[Diagrama: descripción]*
+6. **Usa viñetas y listas** para información que se preste a ello.
+7. **Destaca conceptos clave** con **negritas**.
+8. NO agregues contenido inventado. Solo organiza y limpia lo que ya existe.
+9. NO incluyas los números de slide ni timestamps en el documento final.
+10. Si los slides están casi vacíos o sin contenido útil, genera un documento breve \
+indicando que no se pudo extraer contenido significativo de la presentación.
+
+NOMBRE DE LA CLASE: {class_name.replace('_', ' ')}
+
+Responde SOLO con el documento Markdown, sin explicaciones adicionales."""
+
+        try:
+            response = self.model.generate_content(prompt)
+            document = response.text.strip()
+            logger.info("Documento de slides generado exitosamente")
+            return document
+        except Exception as e:
+            logger.error(f"Error al generar documento de slides: {e}")
+            return ""
+
     def _build_cached_model(self, system_instruction: str, existing_cache_name: str = None):
         """
         Intenta crear/recuperar un caché de Gemini para la transcripción.

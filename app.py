@@ -226,11 +226,16 @@ def get_transcription(class_id):
 
 @app.route('/api/classes/<path:class_id>/slides', methods=['GET'])
 def get_slides_content(class_id):
-    """Devuelve el contenido de slides (slides.md) como texto para renderizar en el frontend."""
+    """Devuelve el contenido de slides y el documento generado por IA."""
     content = file_manager.get_slides(class_id)
-    if content is None:
+    document = file_manager.get_slides_document(class_id)
+    if content is None and document is None:
         return jsonify({"error": "No hay slides para esta clase"}), 404
-    return jsonify({"class_id": class_id, "content": content})
+    return jsonify({
+        "class_id": class_id,
+        "content": content or "",
+        "document": document or "",
+    })
 
 
 @app.route('/api/classes/<path:class_id>/summary', methods=['GET'])
@@ -421,12 +426,25 @@ def process_video():
             file_manager.save_slides(slides_storage_md, class_folder)
 
         # 7. Generar resumen con transcripción + slides (proceso ligero)
-        _set_status("Generando resumen con Gemini...", 94)
+        _set_status("Generando resumen con Gemini...", 93)
         full_context = result["text"] + slides_markdown
         summary = gemini_service.generate_summary(full_context, folder_name)
         file_manager.save_summary(summary, class_folder)
 
-        # 8. Limpiar y finalizar
+        # 8. Generar documento de slides (IA estructura el contenido OCR)
+        if slides_storage_md:
+            _set_status("Generando documento de presentación...", 97)
+            try:
+                slides_document = gemini_service.generate_slides_document(
+                    slides_storage_md, folder_name
+                )
+                if slides_document:
+                    file_manager.save_slides_document(slides_document, class_folder)
+                    logger.info("Documento de slides generado y guardado")
+            except Exception as e:
+                logger.warning(f"Error generando documento de slides (continuando): {e}")
+
+        # 9. Limpiar y finalizar
         _set_status("¡Listo!", 100)
         file_manager.cleanup_temp_files(video_path, audio_path)
 
@@ -823,8 +841,9 @@ def start_chat(class_id):
     if not transcription_text:
         return jsonify({"error": "No se encontró la transcripción"}), 404
 
-    # Enriquecer con contenido de slides si existe
-    slides_content = file_manager.get_slides(class_id) or ""
+    # Enriquecer con contenido de slides si existe (preferir documento IA)
+    slides_content = file_manager.get_slides_document(class_id) \
+        or file_manager.get_slides(class_id) or ""
 
     # Restaurar historial y nombre de caché desde disco
     saved_history = file_manager.get_chat_history(class_id) or []
@@ -872,7 +891,8 @@ def send_chat_message(class_id):
             transcription_text = file_manager.get_transcription_text(class_id)
             if not transcription_text:
                 return jsonify({"error": "No se encontró la transcripción"}), 404
-            slides_content = file_manager.get_slides(class_id) or ""
+            slides_content = file_manager.get_slides_document(class_id) \
+                or file_manager.get_slides(class_id) or ""
             saved_history = file_manager.get_chat_history(class_id) or []
             saved_cache_name = file_manager.get_cache_name(class_id)
             new_cache_name = gemini_service.start_chat_session(

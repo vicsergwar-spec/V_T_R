@@ -1141,10 +1141,22 @@ async function loadSlides(classId) {
     try {
         const res  = await fetch(`/api/classes/${classId}/slides`);
         const data = await res.json();
-        if (!res.ok || !data.content) {
+        if (!res.ok || (!data.content && !data.document)) {
             elements.slidesContent.innerHTML = '<p class="text-muted">No hay slides disponibles</p>';
             return;
         }
+
+        // Preferir documento IA si existe
+        if (data.document) {
+            elements.slidesCount.textContent = 'Documento generado por IA';
+            elements.slidesContent.innerHTML =
+                '<div class="slides-document markdown-body">' +
+                parseMarkdown(data.document) +
+                '</div>';
+            return;
+        }
+
+        // Fallback: vista de tarjetas con datos en crudo
         const slides = parseSlidesMarkdown(data.content);
         elements.slidesCount.textContent = `${slides.length} slide${slides.length !== 1 ? 's' : ''}`;
         if (slides.length === 0) {
