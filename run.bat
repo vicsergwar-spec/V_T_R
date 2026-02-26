@@ -55,22 +55,15 @@ echo  [OK] Dependencias listas
 echo.
 
 :: ─────────────────────────────────────────────
-:: 3b. Intentar instalar ventana nativa (pywebview)
-::     Se instala con --prefer-binary para evitar
-::     compilar pythonnet (requiere .NET SDK).
-::     Si falla, el programa usara el navegador.
+:: 3b. Verificar ventana nativa (PyQt6)
+::     PyQt6 se instala desde requirements.txt
+::     con wheels precompilados (sin compilar nada).
 :: ─────────────────────────────────────────────
-python -m pip show pywebview >nul 2>&1
-if %ERRORLEVEL% NEQ 0 (
-    echo  Instalando ventana nativa ^(pywebview^)...
-    python -m pip install pywebview --prefer-binary -q >nul 2>&1
-    if %ERRORLEVEL% EQU 0 (
-        echo  [OK] Ventana nativa disponible
-    ) else (
-        echo  [!] Ventana nativa no disponible — se abrira el navegador automaticamente
-    )
+python -c "from PyQt6.QtWebEngineWidgets import QWebEngineView" >nul 2>&1
+if %ERRORLEVEL% EQU 0 (
+    echo  [OK] Ventana nativa disponible ^(Qt^)
 ) else (
-    echo  [OK] Ventana nativa ya instalada
+    echo  [!] Ventana nativa no disponible — se abrira el navegador automaticamente
 )
 echo.
 

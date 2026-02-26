@@ -33,3 +33,7 @@ Pillow>=10.2.0
 
 # Generación de PDF para descarga de slides
 fpdf2>=2.7.9
+
+# Ventana nativa de escritorio (wheels precompilados, sin necesidad de compilar)
+PyQt6>=6.6.0
+PyQt6-WebEngine>=6.6.0
