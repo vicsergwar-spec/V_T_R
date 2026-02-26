@@ -252,8 +252,20 @@ function updateVramDisplay(stats) {
     elements.vramBarFill.style.width = `${pct}%`;
     elements.vramBarFill.className = 'vram-bar-fill'
         + (pct >= 90 ? ' vram-crit' : pct >= 70 ? ' vram-warn' : '');
-    elements.vramText.textContent =
-        `VRAM ${stats.vram_used_gb.toFixed(1)} / ${stats.vram_total_gb.toFixed(1)} GB (${pct}%)`;
+
+    // Mostrar carga GPU% y temperatura si pynvml las devuelve
+    let prefix = '';
+    if (stats.gpu_util_pct != null) {
+        const uc = stats.gpu_util_pct >= 90 ? 'vram-crit' : stats.gpu_util_pct >= 60 ? 'vram-warn' : '';
+        prefix = `<span class="gpu-stat ${uc}">GPU ${stats.gpu_util_pct}%</span>`;
+        if (stats.gpu_temp_c != null) {
+            const tc = stats.gpu_temp_c >= 85 ? 'vram-crit' : stats.gpu_temp_c >= 70 ? 'vram-warn' : '';
+            prefix += `<span class="gpu-stat ${tc}"> · ${stats.gpu_temp_c}°C</span>`;
+        }
+        prefix += `<span class="gpu-stat gpu-sep"> · </span>`;
+    }
+    elements.vramText.innerHTML =
+        prefix + `VRAM ${stats.vram_used_gb.toFixed(1)} / ${stats.vram_total_gb.toFixed(1)} GB (${pct}%)`;
 }
 
 async function fetchVramStats() {
