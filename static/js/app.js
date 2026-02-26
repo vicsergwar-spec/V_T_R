@@ -1170,8 +1170,9 @@ async function loadSlides(classId) {
 }
 
 function parseSlidesMarkdown(md) {
-    // Usar regex para encontrar cada encabezado "## Slide N [ts]" directamente,
-    // sin depender de separadores "---" que pueden aparecer en el contenido de los slides.
+    // Normalizar saltos de línea (Windows \r\n → \n)
+    md = md.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
     const slides = [];
     const headerRe = /^## Slide (\d+)\s*(?:\[([^\]]+)\])?/gm;
     let match;
@@ -1180,11 +1181,7 @@ function parseSlidesMarkdown(md) {
 
     while ((match = headerRe.exec(md)) !== null) {
         if (prevSlide !== null) {
-            // Extraer el cuerpo entre el encabezado anterior y el actual
-            const body = md.slice(prevEnd, match.index).replace(/\n?---\s*\n?/g, '').trim();
-            const lines = body.split('\n');
-            prevSlide.text   = lines.filter(l => !l.startsWith('> ')).join('\n').trim();
-            prevSlide.visual = lines.filter(l => l.startsWith('> ')).map(l => l.slice(2)).join('\n').trim();
+            _assignSlideBody(prevSlide, md.slice(prevEnd, match.index));
             slides.push(prevSlide);
         }
         prevSlide = { num: match[1], ts: match[2] || '' };
@@ -1192,14 +1189,31 @@ function parseSlidesMarkdown(md) {
     }
 
     if (prevSlide !== null) {
-        const body = md.slice(prevEnd).replace(/\n?---\s*\n?/g, '').trim();
-        const lines = body.split('\n');
-        prevSlide.text   = lines.filter(l => !l.startsWith('> ')).join('\n').trim();
-        prevSlide.visual = lines.filter(l => l.startsWith('> ')).map(l => l.slice(2)).join('\n').trim();
+        _assignSlideBody(prevSlide, md.slice(prevEnd));
         slides.push(prevSlide);
     }
 
     return slides;
+}
+
+function _assignSlideBody(slide, rawBody) {
+    // Eliminar separadores "---" y espacios sobrantes
+    const body = rawBody.replace(/\n?---\s*\n?/g, '').trim();
+    if (!body) {
+        slide.text = '';
+        slide.visual = '';
+        return;
+    }
+    const lines = body.split('\n');
+    const textLines   = lines.filter(l => !l.startsWith('> '));
+    const visualLines = lines.filter(l =>  l.startsWith('> ')).map(l => l.slice(2));
+
+    slide.visual = visualLines.join('\n').trim();
+
+    const textCandidate = textLines.join('\n').trim();
+    // Fallback: si el filtrado de '> ' dejó el texto vacío pero hay contenido,
+    // mostrar el cuerpo completo para no perder información.
+    slide.text = textCandidate || body;
 }
 
 async function downloadSlides(format) {
