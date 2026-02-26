@@ -13,9 +13,14 @@ import time
 import socket
 import logging
 import sys
+import os
 import webbrowser
 
 logger = logging.getLogger(__name__)
+
+# Forzar software-rendering en Chromium/Qt WebEngine para evitar
+# conflictos entre CUDA y el compositor GPU de la ventana nativa.
+os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu")
 
 
 # ──────────────────────────────────────────────
