@@ -16,7 +16,6 @@ const state = {
     collapsedFolders: new Set(),
     queue: [],          // [{file, status:'pending'|'processing'|'done'|'error', error:''}]
     isProcessing: false,
-    chatHistory: [],
     openaiConfigured: false
 };
 
@@ -34,6 +33,9 @@ const elements = {
     gpuText: document.getElementById('gpuText'),
     geminiStatus: document.getElementById('geminiStatus'),
     geminiText: document.getElementById('geminiText'),
+    vramItem: document.getElementById('vramItem'),
+    vramBarFill: document.getElementById('vramBarFill'),
+    vramText: document.getElementById('vramText'),
 
     // Upload
     uploadArea: document.getElementById('uploadArea'),
@@ -133,6 +135,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initLogs();
     checkSystemStatus();
     loadClasses();
+    startVramPolling();
 });
 
 // ============================================
@@ -192,9 +195,14 @@ async function checkSystemStatus() {
         if (data.gpu_available) {
             elements.gpuStatus.className = 'status-dot success';
             elements.gpuText.textContent = data.gpu_info?.name || 'GPU disponible';
+            // Mostrar VRAM inicial si el servidor la devuelve
+            if (data.gpu_info?.vram_total_gb != null) {
+                updateVramDisplay(data.gpu_info);
+            }
         } else {
             elements.gpuStatus.className = 'status-dot warning';
             elements.gpuText.textContent = 'GPU no disponible (CPU)';
+            elements.vramItem.style.display = 'none';
         }
 
         // Gemini Status
@@ -221,6 +229,40 @@ async function checkSystemStatus() {
         elements.geminiStatus.className = 'status-dot error';
         elements.geminiText.textContent = 'Error de conexión';
     }
+}
+
+// ============================================
+// VRAM en tiempo real
+// ============================================
+
+function updateVramDisplay(stats) {
+    if (!stats || !stats.vram_total_gb) {
+        elements.vramItem.style.display = 'none';
+        return;
+    }
+    elements.vramItem.style.display = 'flex';
+    const pct = stats.vram_used_pct ?? 0;
+    elements.vramBarFill.style.width = `${pct}%`;
+    elements.vramBarFill.className = 'vram-bar-fill'
+        + (pct >= 90 ? ' vram-crit' : pct >= 70 ? ' vram-warn' : '');
+    elements.vramText.textContent =
+        `VRAM ${stats.vram_used_gb.toFixed(1)} / ${stats.vram_total_gb.toFixed(1)} GB (${pct}%)`;
+}
+
+async function fetchVramStats() {
+    try {
+        const res = await fetch('/api/gpu-stats');
+        const data = await res.json();
+        if (data.gpu_available) {
+            updateVramDisplay(data);
+        }
+    } catch (_) { /* ignorar si el servidor está ocupado */ }
+}
+
+function startVramPolling() {
+    // Primera llamada inmediata; luego cada 3 segundos
+    fetchVramStats();
+    setInterval(fetchVramStats, 3000);
 }
 
 // ============================================

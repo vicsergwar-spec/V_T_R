@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 from typing import Optional
 import google.generativeai as genai
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -338,17 +337,6 @@ INSTRUCCIONES:
         if class_id in self.chat_sessions:
             return self.chat_sessions[class_id]["history"]
         return []
-
-    def end_chat_session(self, class_id: str) -> None:
-        """
-        Termina una sesión de chat.
-
-        Args:
-            class_id: Identificador de la clase
-        """
-        if class_id in self.chat_sessions:
-            del self.chat_sessions[class_id]
-            logger.info(f"Sesión de chat terminada para clase: {class_id}")
 
     # ──────────────────────────────────────────────────────────
     # Chat general de carpeta

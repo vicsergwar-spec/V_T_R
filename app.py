@@ -9,7 +9,7 @@ import subprocess
 import logging
 import collections
 from pathlib import Path
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, Response
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
@@ -144,9 +144,16 @@ def get_status():
         import torch
         gpu_available = torch.cuda.is_available()
         if gpu_available:
+            props = torch.cuda.get_device_properties(0)
+            total = props.total_memory
+            free, _ = torch.cuda.mem_get_info(0)
+            used = total - free
             gpu_info = {
                 "name": torch.cuda.get_device_name(0),
-                "memory_total_gb": round(torch.cuda.get_device_properties(0).total_memory / (1024**3), 2)
+                "vram_total_gb": round(total / (1024**3), 2),
+                "vram_used_gb":  round(used  / (1024**3), 2),
+                "vram_free_gb":  round(free  / (1024**3), 2),
+                "vram_used_pct": round(used  / total * 100, 1),
             }
     except ImportError:
         logger.warning("PyTorch no está instalado. No se puede verificar GPU.")
@@ -430,6 +437,35 @@ def get_process_status():
     return jsonify(_proc_status)
 
 
+@app.route('/api/gpu-stats', methods=['GET'])
+def get_gpu_stats():
+    """Devuelve estadísticas en tiempo real de VRAM/GPU para el panel de estado."""
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return jsonify({"gpu_available": False})
+
+        props = torch.cuda.get_device_properties(0)
+        total = props.total_memory
+        # mem_get_info devuelve (libre, total) a nivel de driver — incluye todos los procesos
+        free, _ = torch.cuda.mem_get_info(0)
+        used = total - free
+
+        return jsonify({
+            "gpu_available": True,
+            "name": torch.cuda.get_device_name(0),
+            "vram_total_gb":  round(total / (1024**3), 2),
+            "vram_used_gb":   round(used  / (1024**3), 2),
+            "vram_free_gb":   round(free  / (1024**3), 2),
+            "vram_used_pct":  round(used  / total * 100, 1),
+        })
+    except ImportError:
+        return jsonify({"gpu_available": False})
+    except Exception as e:
+        logger.warning(f"Error obteniendo stats de GPU: {e}")
+        return jsonify({"gpu_available": False})
+
+
 @app.route('/api/shutdown', methods=['POST'])
 def shutdown_machine():
     """Apaga el equipo 3 segundos después de responder (da tiempo al frontend)."""
@@ -612,13 +648,8 @@ def download_slides(class_id):
     safe_name = "".join(c if c.isalnum() or c in "-_ " else "_" for c in class_name)[:60].strip()
 
     if fmt == "markdown":
-        from flask import Response
-        # Generar Markdown enriquecido usando format_slides_for_download
-        from services.slide_extractor import SlideExtractor as _SE  # solo para el formatter
-        # Parsear slides desde el markdown guardado para re-formatear
-        md_content = slides_md  # usar directamente el slides.md guardado
         return Response(
-            md_content,
+            slides_md,
             mimetype="text/markdown; charset=utf-8",
             headers={
                 "Content-Disposition": f'attachment; filename="{safe_name}_slides.md"'
@@ -628,7 +659,6 @@ def download_slides(class_id):
     # PDF
     try:
         pdf_bytes = _build_slides_pdf(class_id, safe_name, slides_md)
-        from flask import Response
         return Response(
             pdf_bytes,
             mimetype="application/pdf",

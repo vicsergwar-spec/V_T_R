@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 import logging
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Bandera para ocultar ventana de consola en Windows (no existe en Linux/macOS)
@@ -113,63 +112,3 @@ class AudioExtractor:
         except subprocess.TimeoutExpired:
             raise RuntimeError("Tiempo de espera agotado al extraer audio (límite: 2 horas)")
 
-    def get_video_duration(self, video_path: str) -> float:
-        """
-        Obtiene la duración de un video en segundos.
-
-        Args:
-            video_path: Ruta al archivo de video
-
-        Returns:
-            Duración en segundos
-        """
-        cmd = [
-            "ffprobe",
-            "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            str(video_path)
-        ]
-
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                creationflags=_SUBPROCESS_FLAGS
-            )
-
-            if result.returncode == 0:
-                return float(result.stdout.strip())
-        except Exception as e:
-            logger.warning(f"No se pudo obtener la duración del video: {e}")
-
-        return 0.0
-
-    def get_video_info(self, video_path: str) -> dict:
-        """
-        Obtiene información sobre un archivo de video.
-
-        Args:
-            video_path: Ruta al archivo de video
-
-        Returns:
-            Diccionario con información del video
-        """
-        video_path = Path(video_path)
-
-        info = {
-            "filename": video_path.name,
-            "size_mb": video_path.stat().st_size / (1024 * 1024),
-            "duration_seconds": self.get_video_duration(str(video_path)),
-            "format": video_path.suffix.lower()
-        }
-
-        # Convertir duración a formato legible
-        duration = info["duration_seconds"]
-        hours = int(duration // 3600)
-        minutes = int((duration % 3600) // 60)
-        seconds = int(duration % 60)
-        info["duration_formatted"] = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-
-        return info

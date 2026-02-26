@@ -10,7 +10,6 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Detecta el sufijo de fecha/hora que añadimos al crear clases: _YYYY-MM-DD_HH-MM
