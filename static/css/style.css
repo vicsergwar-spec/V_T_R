@@ -235,6 +235,51 @@ body {
     white-space: nowrap;
 }
 
+/* ── Botón cancelar procesamiento ─────────────── */
+.btn-cancel-process {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 14px;
+    padding: 6px 14px;
+    background: transparent;
+    border: 1px solid var(--error);
+    color: var(--error);
+    border-radius: var(--radius-sm);
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+}
+.btn-cancel-process:hover:not(:disabled) {
+    background: var(--error-bg);
+}
+.btn-cancel-process:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+/* ── Botón cerrar programa (sidebar) ──────────── */
+.btn-stop-app {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    margin-top: 10px;
+    padding: 7px 10px;
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-muted);
+    border-radius: var(--radius-sm);
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+.btn-stop-app:hover {
+    background: var(--error-bg);
+    color: var(--error);
+    border-color: var(--error);
+}
+
 /* ============================================
    Contenido Principal
    ============================================ */

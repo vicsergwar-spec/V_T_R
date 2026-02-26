@@ -34,6 +34,13 @@ _log_buffer = collections.deque(maxlen=2000)
 # ──────────────────────────────────────────────────────────
 
 _proc_status = {"step": "Esperando...", "percent": 0, "detail": ""}
+_cancel_flag = threading.Event()  # se activa cuando el usuario cancela el procesamiento
+
+
+def _raise_if_cancelled():
+    """Lanza InterruptedError si el usuario solicitó cancelar."""
+    if _cancel_flag.is_set():
+        raise InterruptedError("Procesamiento cancelado por el usuario")
 
 
 def _set_status(step: str, percent: int, detail: str = "") -> None:
@@ -328,13 +335,17 @@ def process_video():
     audio_path = None
 
     try:
+        _cancel_flag.clear()  # limpiar cualquier cancelación anterior
+
         # 1. Guardar video temporal
         _set_status("Guardando video...", 5)
         video_path = file_manager.save_video_to_temp(video_file, filename)
+        _raise_if_cancelled()
 
         # 2. Extraer audio
         _set_status("Extrayendo audio...", 15)
         audio_path = audio_extractor.extract_audio(video_path)
+        _raise_if_cancelled()
 
         # 3. Transcribir (proceso más pesado)
         _set_status(f"Transcribiendo con Whisper ({whisper_model})...", 22)
@@ -355,6 +366,8 @@ def process_video():
                 error_response["gpu_failed"] = True
                 error_response["openai_available"] = True
             return jsonify(error_response), 500
+
+        _raise_if_cancelled()
 
         # 4. Extraer contenido de slides (proceso medio, requiere GOOGLE_VISION_API_KEY)
         slides_markdown = ""
@@ -418,6 +431,13 @@ def process_video():
             "class": class_info
         })
 
+    except InterruptedError as e:
+        logger.info(f"Procesamiento cancelado: {e}")
+        _set_status("Esperando...", 0)
+        if video_path:
+            file_manager.cleanup_temp_files(video_path, audio_path)
+        return jsonify({"error": str(e), "cancelled": True}), 499
+
     except Exception as e:
         logger.error(f"Error procesando video: {e}")
         _set_status("Esperando...", 0)
@@ -435,6 +455,25 @@ def process_video():
 def get_process_status():
     """Devuelve el paso actual del procesamiento para la barra de progreso."""
     return jsonify(_proc_status)
+
+
+@app.route('/api/process/cancel', methods=['POST'])
+def cancel_process():
+    """Solicita la cancelación del procesamiento en curso."""
+    _cancel_flag.set()
+    _set_status("Cancelando...", 0)
+    return jsonify({"ok": True, "message": "Cancelación solicitada"})
+
+
+@app.route('/api/stop', methods=['POST'])
+def stop_server():
+    """Detiene el servidor Flask y cierra la aplicación."""
+    def _do_stop():
+        time.sleep(0.8)
+        logger.info("Servidor detenido por solicitud del usuario.")
+        os._exit(0)
+    threading.Thread(target=_do_stop, daemon=True).start()
+    return jsonify({"ok": True, "message": "Cerrando aplicación..."})
 
 
 @app.route('/api/gpu-stats', methods=['GET'])
