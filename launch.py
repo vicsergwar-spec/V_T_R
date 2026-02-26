@@ -57,7 +57,7 @@ def _wait_for_server(host: str, port: int, timeout: int = 15) -> bool:
 
 def _try_qt_window(url: str) -> bool:
     try:
-        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtWidgets import QApplication, QFileDialog
         from PyQt6.QtWebEngineWidgets import QWebEngineView
         from PyQt6.QtWebEngineCore import QWebEngineProfile
         from PyQt6.QtCore import QUrl, Qt
@@ -80,6 +80,19 @@ def _try_qt_window(url: str) -> bool:
     win.setMinimumSize(900, 600)
     win.load(QUrl(url))
     win.show()
+
+    def _handle_download(download):
+        """Muestra diálogo nativo 'Guardar como' para cualquier descarga."""
+        suggested = download.suggestedFileName()
+        path, _ = QFileDialog.getSaveFileName(win, "Guardar archivo", suggested)
+        if path:
+            download.setDownloadDirectory(os.path.dirname(path) or ".")
+            download.setDownloadFileName(os.path.basename(path))
+            download.accept()
+        else:
+            download.cancel()
+
+    profile.downloadRequested.connect(_handle_download)
 
     app.exec()
     return True

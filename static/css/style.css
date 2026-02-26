@@ -1452,17 +1452,18 @@ body {
 .slide-card {
     background: var(--bg-card);
     border: 1px solid var(--border-color);
+    border-left: 3px solid var(--accent-primary);
     border-radius: var(--radius-md);
     overflow: hidden;
     transition: border-color var(--transition-fast);
 }
-.slide-card:hover { border-color: var(--border-light); }
+.slide-card:hover { border-color: var(--accent-light); }
 
 .slide-card-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 16px;
+    padding: 12px 16px;
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border-color);
 }
