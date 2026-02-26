@@ -65,19 +65,19 @@ if not exist ".env" (
 )
 
 :: ─────────────────────────────────────────────
-:: 5. Iniciar servidor
+:: 5. Iniciar ventana nativa (pywebview + Flask)
 :: ─────────────────────────────────────────────
-echo  [3/3] Iniciando servidor...
+echo  [3/3] Abriendo ventana de la aplicacion...
 echo.
 echo  =========================================
-echo   Abre tu navegador en:
-echo   http://127.0.0.1:5000
+echo   V_T_R se abre en ventana propia
+echo   (sin necesidad de Chrome ni Edge)
 echo.
-echo   Presiona Ctrl+C para detener el servidor
+echo   Cierra la ventana para detener el programa
 echo  =========================================
 echo.
 
-python app.py
+python launch.py
 
 echo.
 echo  Servidor detenido.
