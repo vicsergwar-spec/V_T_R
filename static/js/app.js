@@ -1178,14 +1178,31 @@ function parseSlidesMarkdown(md) {
     }).filter(Boolean);
 }
 
-function downloadSlides(format) {
+async function downloadSlides(format) {
     if (!state.currentClass) return;
-    const a = document.createElement('a');
-    a.href = `/api/classes/${state.currentClass.id}/slides/download?format=${format}`;
-    a.download = '';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    const url = `/api/classes/${state.currentClass.id}/slides/download?format=${format}`;
+    try {
+        const res = await fetch(url);
+        if (!res.ok) {
+            let msg = 'Error al descargar';
+            try { msg = (await res.json()).error || msg; } catch (_) {}
+            showToast('error', 'Error', msg);
+            return;
+        }
+        const blob = await res.blob();
+        const objUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = objUrl;
+        const cd = res.headers.get('Content-Disposition') || '';
+        const fnMatch = cd.match(/filename="([^"]+)"/);
+        a.download = fnMatch ? fnMatch[1] : `slides.${format === 'pdf' ? 'pdf' : 'md'}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(objUrl);
+    } catch (err) {
+        showToast('error', 'Error', 'No se pudo conectar al servidor');
+    }
 }
 
 function downloadTranscription() {
