@@ -476,6 +476,29 @@ def stop_server():
     return jsonify({"ok": True, "message": "Cerrando aplicación..."})
 
 
+def _get_gpu_util_pct() -> int | None:
+    """Intenta leer la utilización de cómputo GPU (0-100) vía pynvml. Devuelve None si no está disponible."""
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+        return util.gpu
+    except Exception:
+        return None
+
+
+def _get_gpu_temp() -> int | None:
+    """Intenta leer la temperatura GPU en °C vía pynvml. Devuelve None si no está disponible."""
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        return pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+    except Exception:
+        return None
+
+
 @app.route('/api/gpu-stats', methods=['GET'])
 def get_gpu_stats():
     """Devuelve estadísticas en tiempo real de VRAM/GPU para el panel de estado."""
@@ -491,12 +514,14 @@ def get_gpu_stats():
         used = total - free
 
         return jsonify({
-            "gpu_available": True,
-            "name": torch.cuda.get_device_name(0),
+            "gpu_available":  True,
+            "name":           torch.cuda.get_device_name(0),
             "vram_total_gb":  round(total / (1024**3), 2),
             "vram_used_gb":   round(used  / (1024**3), 2),
             "vram_free_gb":   round(free  / (1024**3), 2),
             "vram_used_pct":  round(used  / total * 100, 1),
+            "gpu_util_pct":   _get_gpu_util_pct(),   # % carga de cómputo GPU (None si pynvml no disponible)
+            "gpu_temp_c":     _get_gpu_temp(),        # °C (None si pynvml no disponible)
         })
     except ImportError:
         return jsonify({"gpu_available": False})

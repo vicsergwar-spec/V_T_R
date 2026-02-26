@@ -234,6 +234,9 @@ body {
     color: var(--text-muted);
     white-space: nowrap;
 }
+.gpu-stat           { font-size: 0.72rem; color: var(--text-muted); }
+.gpu-stat.vram-warn { color: var(--warning); }
+.gpu-stat.vram-crit { color: var(--error); }
 
 /* ── Botón cancelar procesamiento ─────────────── */
 .btn-cancel-process {
