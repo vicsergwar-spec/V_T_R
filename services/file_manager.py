@@ -230,12 +230,6 @@ class FileManager:
         path = self.clases_dir / class_id / "gemini_cache.txt"
         path.write_text(cache_name, encoding="utf-8")
 
-    def delete_cache_name(self, class_id: str) -> None:
-        """Elimina el archivo con el nombre del caché de Gemini."""
-        path = self.clases_dir / class_id / "gemini_cache.txt"
-        if path.exists():
-            path.unlink()
-
     # ──────────────────────────────────────────────────────────
     # Chat general de carpeta
     # ──────────────────────────────────────────────────────────

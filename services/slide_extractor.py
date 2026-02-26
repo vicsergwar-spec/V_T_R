@@ -200,45 +200,6 @@ class SlideExtractor:
 
         return "\n---\n".join(parts)
 
-    def format_slides_for_download(self, slides: list[dict], class_name: str) -> str:
-        """
-        Genera Markdown completo y enriquecido para descargar y usar con otra IA.
-        Incluye metadatos, contexto y formato limpio optimizado para LLMs.
-        """
-        from datetime import datetime
-        useful = [s for s in slides if s.get("text") or s.get("visual_description")]
-        total_text = sum(len(s.get("text", "")) for s in useful)
-        total_visual = sum(1 for s in useful if s.get("has_visual"))
-
-        lines = [
-            f"# Slides: {class_name.replace('_', ' ')}",
-            f"\n> Generado por V_T_R · {datetime.now().strftime('%d/%m/%Y %H:%M')}",
-            f"> Total slides con contenido: **{len(useful)}** "
-            f"| Con diagramas: **{total_visual}** "
-            f"| Texto total: **{total_text} caracteres**",
-            "\n---\n",
-        ]
-
-        if not useful:
-            lines.append("*No se detectó contenido en los slides del video.*")
-            return "\n".join(lines)
-
-        for slide in useful:
-            mm, ss = divmod(int(slide.get("timestamp", 0)), 60)
-            lines.append(f"## Slide {slide['frame_num']} · [{mm:02d}:{ss:02d}]")
-
-            if slide.get("text"):
-                lines.append("\n**Texto en pantalla:**\n")
-                lines.append(slide["text"])
-
-            if slide.get("visual_description"):
-                lines.append("\n**Elemento visual detectado:**\n")
-                lines.append(f"> {slide['visual_description']}")
-
-            lines.append("\n---\n")
-
-        return "\n".join(lines)
-
     # ─────────────────────────────────────────────────────────────────────────
     # Filtros locales (sin coste de API)
     # ─────────────────────────────────────────────────────────────────────────
@@ -367,7 +328,7 @@ class SlideExtractor:
             )
             for line in result.stdout.strip().splitlines():
                 line = line.strip()
-                if line and line not in ("N/A", ""):
+                if line and line != "N/A":
                     try:
                         timestamps.append(float(line))
                     except ValueError:
@@ -393,7 +354,7 @@ class SlideExtractor:
         1. Cloud Vision → texto (filtrando UI)
         2. Si hay regiones sin texto → Gemini Vision describe el diagrama
         """
-        img_w, img_h = self._get_image_size(frame_path)
+        _, img_h = self._get_image_size(frame_path)
 
         vision_resp = self._call_vision_api(frame_path)
         text, text_blocks = self._parse_vision_response(vision_resp, img_h)
@@ -578,21 +539,21 @@ class SlideExtractor:
     def _describe_with_gemini(self, image_path: str, existing_text: str) -> str:
         """Usa Gemini Vision para describir el contenido visual del slide."""
         try:
-            img = Image.open(image_path)
-            text_ctx = (
-                f"El texto visible en el slide es: «{existing_text[:400].strip()}»"
-                if existing_text.strip()
-                else "El slide no contiene texto significativo."
-            )
-            prompt = (
-                f"Analiza este slide de una clase universitaria.\n{text_ctx}\n\n"
-                "Describe ÚNICAMENTE los elementos visuales no textuales: "
-                "diagramas, gráficas, fórmulas matemáticas, tablas, esquemas, figuras. "
-                "Ignora botones de interfaz, controles del reproductor y elementos de navegación. "
-                "Si no hay elementos visuales académicos, responde exactamente: Sin elementos visuales.\n"
-                "Sé conciso y técnico. Máximo 120 palabras."
-            )
-            response = self._gemini_model.generate_content([prompt, img])
+            with Image.open(image_path) as img:
+                text_ctx = (
+                    f"El texto visible en el slide es: «{existing_text[:400].strip()}»"
+                    if existing_text.strip()
+                    else "El slide no contiene texto significativo."
+                )
+                prompt = (
+                    f"Analiza este slide de una clase universitaria.\n{text_ctx}\n\n"
+                    "Describe ÚNICAMENTE los elementos visuales no textuales: "
+                    "diagramas, gráficas, fórmulas matemáticas, tablas, esquemas, figuras. "
+                    "Ignora botones de interfaz, controles del reproductor y elementos de navegación. "
+                    "Si no hay elementos visuales académicos, responde exactamente: Sin elementos visuales.\n"
+                    "Sé conciso y técnico. Máximo 120 palabras."
+                )
+                response = self._gemini_model.generate_content([prompt, img.copy()])
             description = response.text.strip()
             if "Sin elementos visuales" in description:
                 return ""

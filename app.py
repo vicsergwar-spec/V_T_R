@@ -150,12 +150,6 @@ def index():
     return send_from_directory('static', 'index.html')
 
 
-@app.route('/static/<path:filename>')
-def serve_static(filename):
-    """Sirve archivos estáticos"""
-    return send_from_directory('static', filename)
-
-
 @app.route('/api/status', methods=['GET'])
 def get_status():
     """Obtiene el estado del sistema"""
@@ -416,7 +410,7 @@ def process_video():
 
         # 5. Generar nombre de carpeta
         _set_status("Generando nombre de carpeta...", 87)
-        context_for_naming = result["text"] + (slides_markdown[:2000] if slides_markdown else "")
+        context_for_naming = result["text"] + ("\n" + slides_markdown[:2000] if slides_markdown else "")
         folder_name = gemini_service.generate_folder_name(context_for_naming)
 
         # 6. Crear carpeta y guardar archivos

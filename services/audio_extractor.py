@@ -25,7 +25,7 @@ class AudioExtractor:
         self.sample_rate = sample_rate
         self._check_ffmpeg()
 
-    def _check_ffmpeg(self) -> bool:
+    def _check_ffmpeg(self) -> None:
         """Verifica que FFmpeg está instalado y disponible"""
         try:
             result = subprocess.run(
@@ -34,15 +34,17 @@ class AudioExtractor:
                 text=True,
                 creationflags=_SUBPROCESS_FLAGS
             )
-            if result.returncode == 0:
-                logger.info("FFmpeg encontrado y funcionando")
-                return True
+            if result.returncode != 0:
+                raise RuntimeError(
+                    "FFmpeg se encontró pero devolvió un error. "
+                    "Verifica que la instalación de FFmpeg esté completa."
+                )
+            logger.info("FFmpeg encontrado y funcionando")
         except FileNotFoundError:
             raise RuntimeError(
                 "FFmpeg no está instalado o no está en el PATH. "
                 "Por favor instala FFmpeg siguiendo las instrucciones del README."
             )
-        return False
 
     def extract_audio(self, video_path: str, output_path: str = None) -> str:
         """

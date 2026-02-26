@@ -1825,6 +1825,7 @@ function parseMarkdown(text) {
     const lines = text.split('\n');
     let html = '';
     let inList = false;
+    let listTag = null; // 'ul' o 'ol'
     let inParagraph = false;
 
     for (let i = 0; i < lines.length; i++) {
@@ -1832,19 +1833,19 @@ function parseMarkdown(text) {
 
         // Headers
         if (line.match(/^### /)) {
-            if (inList) { html += '</ul>'; inList = false; }
+            if (inList) { html += `</${listTag}>`; inList = false; listTag = null; }
             if (inParagraph) { html += '</p>'; inParagraph = false; }
             html += '<h3>' + processInline(line.substring(4)) + '</h3>';
             continue;
         }
         if (line.match(/^## /)) {
-            if (inList) { html += '</ul>'; inList = false; }
+            if (inList) { html += `</${listTag}>`; inList = false; listTag = null; }
             if (inParagraph) { html += '</p>'; inParagraph = false; }
             html += '<h2>' + processInline(line.substring(3)) + '</h2>';
             continue;
         }
         if (line.match(/^# /)) {
-            if (inList) { html += '</ul>'; inList = false; }
+            if (inList) { html += `</${listTag}>`; inList = false; listTag = null; }
             if (inParagraph) { html += '</p>'; inParagraph = false; }
             html += '<h1>' + processInline(line.substring(2)) + '</h1>';
             continue;
@@ -1854,7 +1855,8 @@ function parseMarkdown(text) {
         const ulMatch = line.match(/^\s*[-*]\s+(.*)/);
         if (ulMatch) {
             if (inParagraph) { html += '</p>'; inParagraph = false; }
-            if (!inList) { html += '<ul>'; inList = true; }
+            if (inList && listTag !== 'ul') { html += `</${listTag}>`; inList = false; }
+            if (!inList) { html += '<ul>'; inList = true; listTag = 'ul'; }
             html += '<li>' + processInline(ulMatch[1]) + '</li>';
             continue;
         }
@@ -1863,13 +1865,14 @@ function parseMarkdown(text) {
         const olMatch = line.match(/^\s*\d+\.\s+(.*)/);
         if (olMatch) {
             if (inParagraph) { html += '</p>'; inParagraph = false; }
-            if (!inList) { html += '<ul>'; inList = true; }
+            if (inList && listTag !== 'ol') { html += `</${listTag}>`; inList = false; }
+            if (!inList) { html += '<ol>'; inList = true; listTag = 'ol'; }
             html += '<li>' + processInline(olMatch[1]) + '</li>';
             continue;
         }
 
         // Cerrar lista si ya no estamos en una
-        if (inList) { html += '</ul>'; inList = false; }
+        if (inList) { html += `</${listTag}>`; inList = false; listTag = null; }
 
         // Línea vacía = separador de párrafo
         if (line.trim() === '') {
@@ -1888,13 +1891,15 @@ function parseMarkdown(text) {
     }
 
     // Cerrar etiquetas abiertas
-    if (inList) html += '</ul>';
+    if (inList) html += `</${listTag}>`;
     if (inParagraph) html += '</p>';
 
     return html;
 }
 
 function processInline(text) {
+    // Escapar HTML primero para prevenir inyección
+    text = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     return text
         .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
         .replace(/\*(.*?)\*/g, '<em>$1</em>')
