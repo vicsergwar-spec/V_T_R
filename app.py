@@ -618,6 +618,8 @@ def _build_slides_pdf(class_id: str, class_name: str, slides_md: str) -> bytes:
     Usa fpdf2 (puro Python, sin dependencias de sistema).
     """
     from fpdf import FPDF
+    import re as _re
+    from datetime import datetime
 
     # ── Paleta ──────────────────────────────────────────────────────────────
     C_BG       = (248, 249, 250)   # fondo de página
@@ -626,64 +628,78 @@ def _build_slides_pdf(class_id: str, class_name: str, slides_md: str) -> bytes:
     C_TEXT     = (31, 41, 55)      # gris oscuro: texto principal
     C_CAPTION  = (107, 114, 128)   # gris medio: pie de página
     C_VISUAL   = (234, 179, 8)     # amarillo: caja de diagrama
-    C_VISUAL_BG= (255, 251, 235)   # fondo caja diagrama
+
+    def _s(txt: str) -> str:
+        """Sanitiza texto a latin-1 para fpdf core fonts."""
+        return txt.encode("latin-1", errors="replace").decode("latin-1")
+
+    _hdr_txt = _s(f"V_T_R  {class_name.replace('_', ' ')}")
 
     class SlidesPDF(FPDF):
         def header(self):
             if self.page_no() == 1:
                 return
+            # Fondo claro de página
+            self.set_fill_color(*C_BG)
+            self.rect(0, 0, self.w, self.h, "F")
+            # Franja de cabecera
+            ew = self.w - self.l_margin - self.r_margin
             self.set_font("Helvetica", "I", 7)
             self.set_text_color(*C_CAPTION)
-            self.set_y(6)
-            self.cell(0, 4, f"V_T_R · {class_name.replace('_', ' ')}", align="L")
-            self.ln(3)
+            self.set_xy(self.l_margin, 6)
+            self.cell(ew, 4, _hdr_txt, align="L", ln=True)
+            self.set_x(self.l_margin)
             self.set_draw_color(*C_CAPTION)
             self.set_line_width(0.2)
-            self.line(10, self.get_y(), 200, self.get_y())
-            self.ln(2)
+            self.line(10, self.get_y(), self.w - 10, self.get_y())
+            self.set_xy(self.l_margin, self.get_y() + 2)
 
         def footer(self):
             if self.page_no() == 1:
                 return
+            ew = self.w - self.l_margin - self.r_margin
             self.set_y(-12)
+            self.set_x(self.l_margin)
             self.set_font("Helvetica", "", 7)
             self.set_text_color(*C_CAPTION)
-            self.cell(0, 4, f"Pág. {self.page_no() - 1}", align="C")
+            self.cell(ew, 4, f"Pag. {self.page_no() - 1}", align="C")
 
     pdf = SlidesPDF()
     pdf.set_margins(left=14, top=14, right=14)
     pdf.set_auto_page_break(auto=True, margin=16)
-    pdf.set_page_background(C_BG)  # only in fpdf2
+    # Ancho efectivo de contenido (no usar 0 en cell/multi_cell para evitar errores de posición)
+    EW = pdf.w - pdf.l_margin - pdf.r_margin  # ≈ 182 mm en A4
 
     # ── Portada ──────────────────────────────────────────────────────────────
     pdf.add_page()
+    # Fondo de portada
+    pdf.set_fill_color(*C_BG)
+    pdf.rect(0, 0, pdf.w, pdf.h, "F")
     # Banda azul superior
     pdf.set_fill_color(*C_HEADER)
-    pdf.rect(0, 0, 210, 50, "F")
-    pdf.set_y(10)
+    pdf.rect(0, 0, pdf.w, 50, "F")
+
+    pdf.set_xy(pdf.l_margin, 10)
     pdf.set_font("Helvetica", "B", 22)
     pdf.set_text_color(*C_WHITE)
-    pdf.multi_cell(0, 10, "V_T_R", align="C")
+    pdf.cell(EW, 10, "V_T_R", align="C", ln=True)
+    pdf.set_x(pdf.l_margin)
     pdf.set_font("Helvetica", "", 10)
-    pdf.multi_cell(0, 6, "Video Transcriptor y Resumen", align="C")
+    pdf.cell(EW, 6, "Video Transcriptor y Resumen", align="C", ln=True)
 
-    pdf.set_y(60)
+    pdf.set_xy(pdf.l_margin, 62)
     pdf.set_font("Helvetica", "B", 16)
     pdf.set_text_color(*C_TEXT)
-    clean_name = class_name.replace("_", " ")
-    pdf.multi_cell(0, 8, clean_name, align="C")
+    pdf.multi_cell(EW, 8, _s(class_name.replace("_", " ")), align="C")
 
-    from datetime import datetime
-    pdf.set_y(pdf.get_y() + 6)
+    pdf.set_x(pdf.l_margin)
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(*C_CAPTION)
-    pdf.multi_cell(0, 5, f"Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}", align="C")
+    pdf.multi_cell(EW, 5, f"Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}", align="C")
 
-    # Contar slides con contenido (secciones ## Slide N)
-    import re as _re
     n_slides = len(_re.findall(r"^## Slide \d+", slides_md, flags=_re.MULTILINE))
-    pdf.set_y(pdf.get_y() + 4)
-    pdf.multi_cell(0, 5, f"Total slides con contenido: {n_slides}", align="C")
+    pdf.set_x(pdf.l_margin)
+    pdf.multi_cell(EW, 5, f"Total slides con contenido: {n_slides}", align="C")
 
     # ── Parsear secciones del Markdown ───────────────────────────────────────
     sections = []
@@ -695,59 +711,63 @@ def _build_slides_pdf(class_id: str, class_name: str, slides_md: str) -> bytes:
             current = {"header": line[3:], "text_lines": [], "visual": ""}
         elif current is not None:
             stripped = line.strip()
-            if stripped.startswith("> "):          # cita → descripción visual
+            if stripped.startswith("> "):
                 current["visual"] = stripped[2:].strip()
-            elif stripped in ("---", "**Texto en pantalla:**", "**Elemento visual detectado:**"):
-                pass
-            elif stripped:
+            elif stripped not in ("---", "**Texto en pantalla:**", "**Elemento visual detectado:**") and stripped:
                 current["text_lines"].append(stripped)
     if current:
         sections.append(current)
 
     # ── Páginas de slides ─────────────────────────────────────────────────
     for sec in sections:
-        pdf.add_page()
+        try:
+            pdf.add_page()
 
-        # Cabecera del slide (banda azul)
-        hdr_y = pdf.get_y()
-        pdf.set_fill_color(*C_HEADER)
-        pdf.set_text_color(*C_WHITE)
-        pdf.set_font("Helvetica", "B", 11)
-        pdf.cell(0, 8, sec["header"], fill=True, ln=True, align="L")
-        pdf.ln(3)
+            # Cabecera del slide (banda azul)
+            pdf.set_fill_color(*C_HEADER)
+            pdf.set_text_color(*C_WHITE)
+            pdf.set_font("Helvetica", "B", 11)
+            pdf.set_x(pdf.l_margin)
+            pdf.cell(EW, 8, _s(sec["header"]), fill=True, ln=True, align="L")
+            pdf.set_xy(pdf.l_margin, pdf.get_y() + 3)
 
-        # Texto del slide
-        if sec["text_lines"]:
-            pdf.set_font("Helvetica", "", 10)
-            pdf.set_text_color(*C_TEXT)
-            for tl in sec["text_lines"]:
-                # Sanitizar a latin-1 para fpdf core fonts
-                safe = tl.encode("latin-1", errors="replace").decode("latin-1")
-                pdf.multi_cell(0, 5, safe, align="L")
-                pdf.ln(1)
+            # Texto del slide
+            if sec["text_lines"]:
+                pdf.set_font("Helvetica", "", 10)
+                pdf.set_text_color(*C_TEXT)
+                for tl in sec["text_lines"]:
+                    safe = _s(tl)
+                    if not safe.strip():
+                        continue
+                    pdf.set_x(pdf.l_margin)
+                    pdf.multi_cell(EW, 5, safe, align="L")
+                    pdf.set_x(pdf.l_margin)
+                    pdf.ln(1)
 
-        # Caja de diagrama / elemento visual
-        if sec["visual"]:
-            pdf.ln(3)
-            x0 = pdf.get_x()
-            y0 = pdf.get_y()
-            pdf.set_fill_color(*C_VISUAL_BG)
-            pdf.set_draw_color(*C_VISUAL)
-            pdf.set_line_width(0.6)
-            # Dibujar borde izquierdo amarillo
-            pdf.line(x0, y0, x0, y0 + 20)
+            # Caja de diagrama / elemento visual
+            if sec["visual"]:
+                pdf.set_xy(pdf.l_margin, pdf.get_y() + 3)
+                y0 = pdf.get_y()
+                # Borde izquierdo amarillo
+                pdf.set_draw_color(*C_VISUAL)
+                pdf.set_line_width(0.8)
+                pdf.line(pdf.l_margin, y0, pdf.l_margin, y0 + 18)
+                # Etiqueta
+                vis_w = EW - 4
+                pdf.set_xy(pdf.l_margin + 4, y0)
+                pdf.set_font("Helvetica", "B", 8)
+                pdf.set_text_color(*[int(c * 0.6) for c in C_VISUAL])
+                pdf.cell(vis_w, 5, "ELEMENTO VISUAL / DIAGRAMA", ln=True)
+                # Descripción
+                pdf.set_x(pdf.l_margin + 4)
+                pdf.set_font("Helvetica", "I", 9)
+                pdf.set_text_color(*C_TEXT)
+                pdf.multi_cell(vis_w, 5, _s(sec["visual"]), align="L")
+                pdf.set_xy(pdf.l_margin, pdf.get_y() + 2)
 
-            pdf.set_x(x0 + 4)
-            pdf.set_font("Helvetica", "B", 8)
-            pdf.set_text_color(*[int(c * 0.6) for c in C_VISUAL])
-            pdf.cell(0, 5, "ELEMENTO VISUAL / DIAGRAMA", ln=True)
-
-            pdf.set_x(x0 + 4)
-            pdf.set_font("Helvetica", "I", 9)
-            pdf.set_text_color(*C_TEXT)
-            safe_v = sec["visual"].encode("latin-1", errors="replace").decode("latin-1")
-            pdf.multi_cell(0, 5, safe_v, align="L")
-            pdf.ln(2)
+        except Exception as slide_err:
+            logger.warning(f"PDF: omitiendo slide '{sec.get('header', '?')}': {slide_err}")
+            continue
 
     return bytes(pdf.output())
 
