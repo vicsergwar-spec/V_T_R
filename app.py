@@ -107,6 +107,7 @@ if config.GOOGLE_VISION_API_KEY and config.SLIDE_EXTRACTION_ENABLED:
         slide_extractor = SlideExtractor(
             vision_api_key=config.GOOGLE_VISION_API_KEY,
             gemini_api_key=config.GEMINI_API_KEY or None,
+            gemini_model=config.GEMINI_MODEL,
         )
         logger.info("SlideExtractor listo (Cloud Vision + Gemini Vision)")
     except Exception as e:
@@ -371,6 +372,7 @@ def process_video():
 
         # 4. Extraer contenido de slides (proceso medio, requiere GOOGLE_VISION_API_KEY)
         slides_markdown = ""
+        slides_storage_md = ""
         if slide_extractor:
             try:
                 _set_status("Detectando cambios de escena...", 65)
@@ -389,8 +391,9 @@ def process_video():
                     progress_callback=_slides_progress,
                 )
                 slides_markdown = slide_extractor.format_slides_for_context(slides)
+                slides_storage_md = slide_extractor.format_slides_for_storage(slides)
                 n_useful = len([s for s in slides if s.get("text") or s.get("visual_description")])
-                if slides_markdown:
+                if slides_storage_md:
                     logger.info(f"Slides extraídos: {n_useful} con contenido")
                 else:
                     logger.info("No se encontró contenido en los slides del video")
@@ -406,8 +409,8 @@ def process_video():
         _set_status("Guardando transcripción e imágenes...", 91)
         class_folder = file_manager.create_class_folder(folder_name, parent_path=folder_path)
         file_manager.save_transcription(result["segments"], class_folder)
-        if slides_markdown:
-            file_manager.save_slides(slides_markdown, class_folder)
+        if slides_storage_md:
+            file_manager.save_slides(slides_storage_md, class_folder)
 
         # 7. Generar resumen con transcripción + slides (proceso ligero)
         _set_status("Generando resumen con Gemini...", 94)
