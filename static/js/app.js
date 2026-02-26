@@ -1147,6 +1147,10 @@ async function loadSlides(classId) {
         }
         const slides = parseSlidesMarkdown(data.content);
         elements.slidesCount.textContent = `${slides.length} slide${slides.length !== 1 ? 's' : ''}`;
+        if (slides.length === 0) {
+            elements.slidesContent.innerHTML = '<p class="text-muted">No se encontró contenido en los slides</p>';
+            return;
+        }
         elements.slidesContent.innerHTML = slides.map(s => `
             <div class="slide-card">
                 <div class="slide-card-header">
@@ -1155,7 +1159,7 @@ async function loadSlides(classId) {
                 </div>
                 ${s.text ? `<div class="slide-card-text">${escapeHtml(s.text)}</div>` : ''}
                 ${s.visual ? `<div class="slide-card-visual">
-                    <span class="visual-label">🖼 Descripción visual</span>
+                    <span class="visual-label">Descripción visual</span>
                     <p>${escapeHtml(s.visual)}</p>
                 </div>` : ''}
             </div>`).join('');
@@ -1166,21 +1170,44 @@ async function loadSlides(classId) {
 }
 
 function parseSlidesMarkdown(md) {
-    const parts = md.split(/\n---\n|\n---$/);
-    return parts.map(section => {
-        const headerMatch = section.match(/^##\s+Slide\s+(\d+)\s*(?:\[([^\]]+)\])?/m);
-        if (!headerMatch) return null;
-        const body  = section.replace(/^##[^\n]*\n?/, '').trim();
+    // Usar regex para encontrar cada encabezado "## Slide N [ts]" directamente,
+    // sin depender de separadores "---" que pueden aparecer en el contenido de los slides.
+    const slides = [];
+    const headerRe = /^## Slide (\d+)\s*(?:\[([^\]]+)\])?/gm;
+    let match;
+    let prevEnd = 0;
+    let prevSlide = null;
+
+    while ((match = headerRe.exec(md)) !== null) {
+        if (prevSlide !== null) {
+            // Extraer el cuerpo entre el encabezado anterior y el actual
+            const body = md.slice(prevEnd, match.index).replace(/\n?---\s*\n?/g, '').trim();
+            const lines = body.split('\n');
+            prevSlide.text   = lines.filter(l => !l.startsWith('> ')).join('\n').trim();
+            prevSlide.visual = lines.filter(l => l.startsWith('> ')).map(l => l.slice(2)).join('\n').trim();
+            slides.push(prevSlide);
+        }
+        prevSlide = { num: match[1], ts: match[2] || '' };
+        prevEnd = match.index + match[0].length;
+    }
+
+    if (prevSlide !== null) {
+        const body = md.slice(prevEnd).replace(/\n?---\s*\n?/g, '').trim();
         const lines = body.split('\n');
-        const text   = lines.filter(l => !l.startsWith('> ')).join('\n').trim();
-        const visual = lines.filter(l => l.startsWith('> ')).map(l => l.slice(2)).join('\n').trim();
-        return { num: headerMatch[1], ts: headerMatch[2] || '', text, visual };
-    }).filter(Boolean);
+        prevSlide.text   = lines.filter(l => !l.startsWith('> ')).join('\n').trim();
+        prevSlide.visual = lines.filter(l => l.startsWith('> ')).map(l => l.slice(2)).join('\n').trim();
+        slides.push(prevSlide);
+    }
+
+    return slides;
 }
 
 async function downloadSlides(format) {
     if (!state.currentClass) return;
-    const url = `/api/classes/${state.currentClass.id}/slides/download?format=${format}`;
+    const btn = format === 'pdf' ? elements.downloadSlidesPdfBtn : elements.downloadSlidesMdBtn;
+    const origText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Descargando...'; }
+    const url = `/api/classes/${encodeURIComponent(state.currentClass.id).replace(/%2F/g, '/')}/slides/download?format=${format}`;
     try {
         const res = await fetch(url);
         if (!res.ok) {
@@ -1200,8 +1227,11 @@ async function downloadSlides(format) {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(objUrl);
+        showToast('success', 'Descargado', `Archivo ${format.toUpperCase()} listo`);
     } catch (err) {
         showToast('error', 'Error', 'No se pudo conectar al servidor');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = origText; }
     }
 }
 
