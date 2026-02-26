@@ -479,20 +479,61 @@ def stop_server():
     return jsonify({"ok": True, "message": "Cerrando aplicación..."})
 
 
+def _nvidia_smi(*query_fields: str) -> list[str] | None:
+    """
+    Ejecuta nvidia-smi y devuelve los valores solicitados, o None si falla.
+    Busca nvidia-smi en PATH y también en la ruta típica de Windows.
+    """
+    import shutil
+    smi = shutil.which("nvidia-smi")
+    if not smi and os.name == "nt":
+        # Ruta común en Windows con drivers DCH / CUDA Toolkit
+        candidates = [
+            r"C:\Windows\System32\nvidia-smi.exe",
+            r"C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe",
+        ]
+        smi = next((p for p in candidates if os.path.isfile(p)), None)
+    if not smi:
+        return None
+    try:
+        flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        result = subprocess.run(
+            [smi, f"--query-gpu={','.join(query_fields)}", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=4,
+            creationflags=flags,
+        )
+        if result.returncode == 0:
+            return [v.strip() for v in result.stdout.strip().split(",")]
+    except Exception:
+        pass
+    return None
+
+
 def _get_gpu_util_pct() -> int | None:
-    """Intenta leer la utilización de cómputo GPU (0-100) vía pynvml. Devuelve None si no está disponible."""
+    """Utilización de cómputo GPU (0-100). Usa nvidia-smi y pynvml como fallback."""
+    vals = _nvidia_smi("utilization.gpu")
+    if vals:
+        try:
+            return int(vals[0])
+        except ValueError:
+            pass
     try:
         import pynvml
         pynvml.nvmlInit()
         handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-        util = pynvml.nvmlDeviceGetUtilizationRates(handle)
-        return util.gpu
+        return pynvml.nvmlDeviceGetUtilizationRates(handle).gpu
     except Exception:
         return None
 
 
 def _get_gpu_temp() -> int | None:
-    """Intenta leer la temperatura GPU en °C vía pynvml. Devuelve None si no está disponible."""
+    """Temperatura GPU en °C. Usa nvidia-smi y pynvml como fallback."""
+    vals = _nvidia_smi("temperature.gpu")
+    if vals:
+        try:
+            return int(vals[0])
+        except ValueError:
+            pass
     try:
         import pynvml
         pynvml.nvmlInit()
