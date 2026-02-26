@@ -75,7 +75,21 @@ logging.getLogger().addHandler(_mem_handler)
 # Inicializar Flask
 app = Flask(__name__, static_folder='static')
 app.config['MAX_CONTENT_LENGTH'] = config.MAX_CONTENT_LENGTH
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # Sin caché en archivos estáticos
 CORS(app)
+
+
+@app.after_request
+def _no_cache(response):
+    """Evita que el WebEngine cachee archivos JS/CSS para que siempre cargue la versión actual."""
+    if response.content_type and any(
+        response.content_type.startswith(t)
+        for t in ("application/javascript", "text/css", "text/html")
+    ):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
 
 # Inicializar servicios
 file_manager = FileManager(
