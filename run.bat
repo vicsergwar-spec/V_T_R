@@ -1,5 +1,7 @@
 @echo off
 chcp 65001 >nul 2>&1
+:: Moverse al directorio donde esta este archivo (funciona desde cualquier ubicacion)
+cd /d "%~dp0"
 title V_T_R - Video Transcriptor y Resumen
 
 echo.
