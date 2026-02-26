@@ -24,20 +24,28 @@ echo.
 
 :: ─────────────────────────────────────────────
 :: 2. Activar entorno virtual si existe
+::    Busca primero .venv\ y luego venv\
 :: ─────────────────────────────────────────────
 if exist ".venv\Scripts\activate.bat" (
     call .venv\Scripts\activate.bat
-    echo  [OK] Entorno virtual activado
+    echo  [OK] Entorno virtual activado ^(.venv^)
+    echo.
+) else if exist "venv\Scripts\activate.bat" (
+    call venv\Scripts\activate.bat
+    echo  [OK] Entorno virtual activado ^(venv^)
+    echo.
+) else (
+    echo  [!] No se encontro entorno virtual — usando Python del sistema
     echo.
 )
 
 :: ─────────────────────────────────────────────
 :: 3. Verificar dependencias
-::    pip ya omite los paquetes que esten al dia,
-::    solo instala lo que sea nuevo o haya cambiado
+::    Se usa "python -m pip" para asegurar que
+::    funciona aunque pip no este en el PATH solo
 :: ─────────────────────────────────────────────
 echo  [2/3] Verificando dependencias...
-pip install -r requirements.txt -q
+python -m pip install -r requirements.txt -q
 if %ERRORLEVEL% NEQ 0 (
     echo  [!] Error instalando dependencias. Revisa el mensaje arriba.
     pause
