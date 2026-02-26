@@ -70,7 +70,12 @@ class SlideExtractor:
       - Gemini Vision (de pago): solo cuando se detectan diagramas
     """
 
-    def __init__(self, vision_api_key: str, gemini_api_key: Optional[str] = None):
+    def __init__(
+        self,
+        vision_api_key: str,
+        gemini_api_key: Optional[str] = None,
+        gemini_model: str = "gemini-2.0-flash-lite",
+    ):
         if not vision_api_key:
             raise ValueError("Se requiere GOOGLE_VISION_API_KEY para SlideExtractor")
 
@@ -81,7 +86,7 @@ class SlideExtractor:
             try:
                 import google.generativeai as genai
                 genai.configure(api_key=gemini_api_key)
-                self._gemini_model = genai.GenerativeModel("gemini-2.0-flash")
+                self._gemini_model = genai.GenerativeModel(gemini_model)
                 logger.info("SlideExtractor: Gemini Vision disponible para diagramas")
             except Exception as e:
                 logger.warning(f"SlideExtractor: Gemini Vision no disponible: {e}")
@@ -170,6 +175,30 @@ class SlideExtractor:
                 lines.append(f"\n*[Elemento visual: {slide['visual_description']}]*")
 
         return "\n".join(lines)
+
+    def format_slides_for_storage(self, slides: list[dict]) -> str:
+        """
+        Genera Markdown en el formato exacto que espera el frontend para mostrar
+        los slides en la pestaña 'Presentación'.
+
+        Formato: secciones ## Slide N [MM:SS] separadas por líneas ---
+        Compatible con parseSlidesMarkdown() en app.js.
+        """
+        useful = [s for s in slides if s.get("text") or s.get("visual_description")]
+        if not useful:
+            return ""
+
+        parts = []
+        for slide in useful:
+            mm, ss = divmod(int(slide.get("timestamp", 0)), 60)
+            section_lines = [f"## Slide {slide['frame_num']} [{mm:02d}:{ss:02d}]"]
+            if slide.get("text"):
+                section_lines.append(slide["text"])
+            if slide.get("visual_description"):
+                section_lines.append(f"> {slide['visual_description']}")
+            parts.append("\n".join(section_lines))
+
+        return "\n---\n".join(parts)
 
     def format_slides_for_download(self, slides: list[dict], class_name: str) -> str:
         """
