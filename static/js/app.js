@@ -16,7 +16,9 @@ const state = {
     collapsedFolders: new Set(),
     queue: [],          // [{file, status:'pending'|'processing'|'done'|'error', error:''}]
     isProcessing: false,
-    openaiConfigured: false
+    openaiConfigured: false,
+    cancelRequested: false,
+    abortController: null
 };
 
 // ============================================
@@ -117,7 +119,11 @@ const elements = {
     clearLogsBtn: document.getElementById('clearLogsBtn'),
 
     // Toast
-    toastContainer: document.getElementById('toastContainer')
+    toastContainer: document.getElementById('toastContainer'),
+
+    // Cancel / Stop
+    cancelProcessBtn: document.getElementById('cancelProcessBtn'),
+    stopAppBtn: document.getElementById('stopAppBtn')
 };
 
 // ============================================
@@ -133,6 +139,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initModal();
     initRenameModal();
     initLogs();
+    initCancelStop();
     checkSystemStatus();
     loadClasses();
     startVramPolling();
@@ -263,6 +270,42 @@ function startVramPolling() {
     // Primera llamada inmediata; luego cada 3 segundos
     fetchVramStats();
     setInterval(fetchVramStats, 3000);
+}
+
+// ============================================
+// Cancelar procesamiento / Cerrar programa
+// ============================================
+
+function initCancelStop() {
+    elements.cancelProcessBtn.addEventListener('click', cancelProcessing);
+    elements.stopAppBtn.addEventListener('click', stopApp);
+}
+
+async function cancelProcessing() {
+    state.cancelRequested = true;
+    elements.cancelProcessBtn.disabled = true;
+    elements.cancelProcessBtn.textContent = 'Cancelando...';
+    // Pedir al servidor que se detenga en el próximo checkpoint
+    await fetch('/api/process/cancel', { method: 'POST' }).catch(() => {});
+    // Abortar el fetch en curso (no esperar la respuesta del servidor)
+    if (state.abortController) {
+        state.abortController.abort();
+    }
+    updateProgress(0, 'Cancelado por el usuario');
+    elements.cancelProcessBtn.style.display = 'none';
+    elements.cancelProcessBtn.disabled = false;
+    elements.cancelProcessBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="13" height="13"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Cancelar procesamiento`;
+}
+
+function stopApp() {
+    showConfirmModal(
+        'Cerrar programa',
+        '¿Deseas cerrar el servidor y la aplicación? Se perderá el procesamiento en curso.',
+        async () => {
+            await fetch('/api/stop', { method: 'POST' }).catch(() => {});
+            document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;color:#94a3b8;background:#0d0f14;font-size:1.1rem;">Servidor cerrado. Puedes cerrar esta ventana.</div>';
+        }
+    );
 }
 
 // ============================================
@@ -426,8 +469,10 @@ async function processQueue() {
     if (pending.length === 0 || state.isProcessing) return;
 
     state.isProcessing = true;
+    state.cancelRequested = false;
     elements.processBtn.disabled = true;
     elements.progressContainer.style.display = 'block';
+    elements.cancelProcessBtn.style.display = 'flex';
 
     const total = pending.length;
     let num = 0;
@@ -437,6 +482,8 @@ async function processQueue() {
     }
 
     for (let i = 0; i < state.queue.length; i++) {
+        if (state.cancelRequested) break;
+
         const item = state.queue[i];
         if (item.status !== 'pending') continue;
 
@@ -454,6 +501,11 @@ async function processQueue() {
             await processOneVideo(item, num, total);
             item.status = 'done';
         } catch (err) {
+            if (err.name === 'AbortError' || state.cancelRequested) {
+                item.status = 'error';
+                item.error = 'Cancelado por el usuario';
+                break;
+            }
             item.status = 'error';
             item.error = err.message;
             showToast('error', `Error: ${item.file.name}`, err.message);
@@ -462,6 +514,9 @@ async function processQueue() {
     }
 
     state.isProcessing = false;
+    state.cancelRequested = false;
+    state.abortController = null;
+    elements.cancelProcessBtn.style.display = 'none';
     elements.queueCounter.style.display = 'none';
     updateProcessBtn();
     loadClasses();
@@ -502,6 +557,7 @@ async function processOneVideo(item, currentNum, totalNum) {
     formData.append('model', elements.modelSelect.value);
     formData.append('folder_path', elements.folderSelect.value);
 
+    state.abortController = new AbortController();
     const startTime = Date.now();
 
     function elapsedStr() {
@@ -529,7 +585,11 @@ async function processOneVideo(item, currentNum, totalNum) {
     pollStatus();
 
     try {
-        const response = await fetch('/api/process', { method: 'POST', body: formData });
+        const response = await fetch('/api/process', {
+            method: 'POST',
+            body: formData,
+            signal: state.abortController.signal
+        });
         clearInterval(statusInterval);
 
         const data = await response.json();

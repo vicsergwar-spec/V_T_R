@@ -56,6 +56,14 @@
                     <span class="status-dot" id="geminiStatus"></span>
                     <span id="geminiText">Verificando Gemini...</span>
                 </div>
+                <button class="btn-stop-app" id="stopAppBtn" title="Detiene el servidor y cierra la aplicación">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="12" y1="8" x2="12" y2="12"/>
+                        <line x1="12" y1="16" x2="12.01" y2="16"/>
+                    </svg>
+                    Cerrar programa
+                </button>
             </div>
         </nav>
 
@@ -151,6 +159,12 @@
                             <span id="progressText">Preparando...</span>
                             <span id="progressPercent">0%</span>
                         </div>
+                        <button class="btn-cancel-process" id="cancelProcessBtn" style="display:none">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="13" height="13">
+                                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                            </svg>
+                            Cancelar procesamiento
+                        </button>
                     </div>
                 </div>
             </section>
