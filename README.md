@@ -1,19 +1,21 @@
 # V_T_R - Video Transcriptor y Resumen
 
-Sistema completo de procesamiento de videos de clases académicas. Transcribe videos usando Whisper con GPU local y genera resúmenes inteligentes, chats individuales por clase y chat general por carpeta con Google Gemini AI.
+Sistema completo de procesamiento de videos de clases académicas. Transcribe videos usando Whisper con GPU local o mediante la API de OpenAI (nube, sin GPU) y genera resúmenes inteligentes, chats individuales por clase y chat general por carpeta con Google Gemini AI.
 
 ## Características
 
-- **Transcripción automática** con faster-Whisper usando GPU (CUDA)
+- **Transcripción automática** con faster-Whisper usando GPU (CUDA) o API de OpenAI Whisper (nube, sin GPU)
 - **Resúmenes inteligentes** generados por Gemini AI
 - **Chat por clase** — pregunta sobre el contenido de una clase específica
 - **Chat por carpeta** — chat general con el conocimiento de **todas** las clases de una materia a la vez
 - **Historial de chat persistente** — los chats se conservan entre sesiones y solo se borran cuando el usuario lo decide
 - **Context Caching de Gemini** — la transcripción se sube una vez al caché (dura 1 hora); los mensajes siguientes no reenvían el contenido completo, ahorrando tokens
 - **Extracción de slides** — detecta y extrae los fotogramas relevantes del video (requiere Google Vision API)
+- **Almacenamiento por clase** — cada clase procesada tiene su propia carpeta con transcripción (`.jsonl`), resumen (`.md`), imágenes de slides (`slide_images/`) y documentos generados por IA
 - **Organización automática** de archivos por materia/carpeta y tema
 - **Soporte para múltiples formatos** de video (mp4, mkv, avi, mov, webm, etc.)
-- **Lanzadores automáticos** (`run.bat` / `run.sh`) — actualizan el código, instalan dependencias y arrancan el servidor con un doble clic
+- **Lanzador nativo** (`launch.py`) — abre una ventana de escritorio (PyQt6 → pywebview → navegador) con Flask en segundo plano
+- **Lanzadores automáticos** (`run.bat`) — actualiza el código, instala dependencias y arranca el servidor con un doble clic
 - **Visor de logs híbrido** — botones de rango rápido (1h, 2h, 4h, 24h, Todo) combinados con selectores manuales de hora inicio/fin y botón de copiar al portapapeles
 - **Acceso remoto** — servidor escucha en `0.0.0.0` con túnel seguro vía cloudflared para consultar chats y descargar archivos desde cualquier red
 - **PDF con aspect-ratio inteligente** — las imágenes de slides se renderizan con proporciones correctas (`contain`) y centrado horizontal automático
@@ -150,14 +152,20 @@ GEMINI_MODEL = "gemini-3-flash-preview"  # Cambia por el ID exacto de Google AI 
 
 ## Uso Rápido (Recomendado)
 
-### Opción A — Lanzador automático (un doble clic)
+### Opción A — Lanzador con ventana nativa (recomendado)
 
-| Sistema operativo | Archivo a ejecutar |
-|---|---|
-| Windows | `run.bat` |
-| Linux / macOS | `run.sh` |
+```bash
+python launch.py
+```
 
-El lanzador realiza automáticamente:
+`launch.py` arranca Flask en un hilo de fondo y abre la interfaz en una ventana de escritorio usando, por orden de prioridad:
+1. **PyQt6 + QWebEngineView** — wheels precompilados, sin compilar nada
+2. **pywebview** — requiere pythonnet/.NET SDK en Windows
+3. **Navegador por defecto** — fallback garantizado
+
+### Opción B — Lanzador automático (`run.bat`)
+
+Doble clic en `run.bat` (Windows). El script realiza automáticamente:
 1. `git pull` — descarga los últimos cambios del repositorio (si hay conexión)
 2. Activa el entorno virtual (`.venv/` o `venv/`) si existe
 3. `pip install -r requirements.txt` — instala/actualiza dependencias
@@ -166,7 +174,7 @@ El lanzador realiza automáticamente:
 
 > **Nota:** `git pull` no necesita configuración — git ya conoce la URL del repositorio desde que fue clonado (guardada en `.git/config`). Si no hay conexión, el lanzador continúa con la versión local sin interrumpirse.
 
-### Opción B — Manual
+### Opción C — Manual
 
 ```bash
 # Activar entorno virtual
@@ -194,15 +202,19 @@ El servidor inicia en **http://localhost:5000** (accesible desde la red local en
    | `small` | ~1–2 GB | GPUs con poca VRAM |
    | `medium` | ~3 GB | Uso general (recomendado) |
    | `large-v3` | ~4–5 GB | Máxima calidad |
-   | `openai` | Sin GPU | Sin GPU local |
+   | `openai` | N/A (nube) | Sin GPU local — usa la API de OpenAI Whisper (`whisper-1`) |
+
+   > **Nota:** La opción `openai` requiere `OPENAI_API_KEY` en `.env`. Si no está configurada, el selector la muestra deshabilitada. Cuando la transcripción local falla por error de GPU, el frontend ofrece reintentar automáticamente con OpenAI si la key está disponible.
 
 4. Hacer clic en **"Procesar"**
 5. El sistema:
    - Extrae el audio del video con FFmpeg
-   - Transcribe con faster-Whisper (GPU)
-   - Genera nombre y resumen con Gemini
-   - Extrae slides relevantes (si está habilitado)
-   - Guarda todos los archivos
+   - Transcribe con faster-Whisper (GPU) o con la API de OpenAI según el modelo elegido
+   - Genera un nombre de carpeta automático con Gemini
+   - Crea la carpeta de la clase dentro de `clases/` y guarda la transcripción como `.jsonl`
+   - Extrae slides relevantes y persiste las imágenes en `slide_images/` dentro de la carpeta de la clase
+   - Genera resumen estructurado (`.md`) y documento de presentación con IA (`slides_document.md`)
+   - Guarda todos los archivos organizados por materia/carpeta
 
 ### Ver Clases Procesadas
 
@@ -311,44 +323,52 @@ Context caching no disponible (...), usando system_instruction estándar
 V_T_R/
 ├── app.py                  # Servidor Flask y rutas de la API
 ├── config.py               # Configuración global (modelos, paths, API keys)
+├── launch.py               # Lanzador con ventana nativa (PyQt6 / pywebview / navegador)
 ├── requirements.txt        # Dependencias de Python
 ├── run.bat                 # Lanzador automático para Windows
-├── run.sh                  # Lanzador automático para Linux/macOS
 ├── .env                    # API keys (no subir al repositorio)
-├── .env.example            # Plantilla para crear .env
 ├── services/
 │   ├── audio_extractor.py  # Extracción de audio con FFmpeg
 │   ├── file_manager.py     # Lectura/escritura de archivos de clases y carpetas
 │   ├── gemini_service.py   # Integración con Gemini API (chat, caché, resúmenes)
 │   ├── slide_extractor.py  # Extracción de slides con Google Vision
-│   └── transcriber.py      # Transcripción con faster-Whisper
+│   └── transcriber.py      # Transcripción con faster-Whisper / OpenAI Whisper API
 ├── static/
 │   ├── index.html          # Interfaz web (SPA)
 │   ├── css/style.css       # Estilos (tema oscuro)
 │   └── js/app.js           # Lógica del frontend
 └── clases/                 # Datos generados (creado automáticamente)
-    └── Materia_Tema/
-        ├── transcripcion.jsonl         # Transcripción con timestamps
-        ├── resumen.md                  # Resumen estructurado
-        ├── slides.md                      # Slides crudos (Markdown con refs a imágenes)
-        ├── slides_document.md             # Documento de slides generado por IA
-        ├── slide_images/                  # Fotogramas extraídos + sub-imágenes
-        │   ├── slide_001.jpg              # Imagen principal del slide
-        │   └── slide_001_sub_1.jpg        # Sub-imagen detectada dentro del slide
-        ├── chat_historial.json         # Historial de chat por clase
-        ├── gemini_cache.txt            # Nombre del caché de Gemini (por clase)
-        ├── folder_chat_historial.json  # Historial del chat de carpeta
-        └── folder_gemini_cache.txt     # Caché de Gemini del chat de carpeta
+    └── Materia/                        # Carpeta de materia (agrupación)
+        └── Nombre_De_Clase/            # Carpeta individual de la clase
+            ├── transcripcion.jsonl      # Transcripción con timestamps (JSONL)
+            ├── resumen.md               # Resumen estructurado generado por Gemini
+            ├── slides.md                # Slides crudos (Markdown con refs a imágenes)
+            ├── slides_document.md       # Documento de presentación generado por IA
+            ├── slide_images/            # Imágenes extraídas del video
+            │   ├── slide_001.jpg        # Fotograma principal del slide
+            │   ├── slide_001_sub_1.jpg  # Sub-imagen detectada dentro del slide
+            │   └── slide_002.jpg        # ...
+            ├── chat_historial.json      # Historial de chat por clase
+            ├── gemini_cache.txt         # Nombre del caché de Gemini (por clase)
+            ├── folder_chat_historial.json  # Historial del chat de carpeta
+            └── folder_gemini_cache.txt  # Caché de Gemini del chat de carpeta
 ```
 
 ### Formatos de archivos generados
 
-**Transcripción (`transcripcion.jsonl`)** — una línea por segmento:
+**Transcripción (`transcripcion.jsonl`)** — formato [JSON Lines](https://jsonlines.org/), una línea JSON por segmento de audio:
 ```json
 {"timestamp_inicio": "00:00:00.000", "timestamp_fin": "00:00:05.230", "texto": "texto transcrito", "confianza": 0.95}
+{"timestamp_inicio": "00:00:05.230", "timestamp_fin": "00:00:12.100", "texto": "siguiente segmento", "confianza": 0.91}
 ```
+Cada segmento incluye:
+- `timestamp_inicio` / `timestamp_fin` — rango temporal en formato `HH:MM:SS.mmm`
+- `texto` — texto transcrito del segmento
+- `confianza` — valor normalizado 0.0–1.0 derivado de `avg_logprob`
 
-**Resumen (`resumen.md`)**:
+> El formato `.jsonl` permite lectura incremental (línea a línea) sin cargar todo el archivo en memoria.
+
+**Resumen (`resumen.md`)** — generado por Gemini AI a partir de la transcripción completa + slides:
 ```markdown
 # Nombre de la clase
 ## Fecha de procesamiento
@@ -356,6 +376,16 @@ V_T_R/
 ## Lo más importante para estudiar
 ## Tareas o pendientes mencionados
 ```
+
+**Documento de presentación (`slides_document.md`)** — generado por Gemini AI a partir del contenido OCR de los slides, con referencias a las imágenes:
+```markdown
+# Título del tema
+## Sección 1
+Contenido estructurado...
+<figure src="slide_images/slide_001.jpg" />
+```
+
+**Imágenes de slides (`slide_images/`)** — fotogramas clave extraídos del video y sub-imágenes detectadas dentro de cada fotograma. Se almacenan directamente en la carpeta de la clase para que las referencias relativas funcionen en los documentos Markdown y en la interfaz web.
 
 **Historial de chat (`chat_historial.json` / `folder_chat_historial.json`)**:
 ```json
@@ -420,6 +450,7 @@ El backend expone los siguientes endpoints:
 
 ### La transcripción es muy lenta
 - Usar el modelo `small` en lugar de `medium`
+- Usar la opción `openai` para transcribir en la nube sin GPU local
 - Cerrar otras aplicaciones que usen la GPU
 - Verificar que Whisper está usando CUDA y no CPU:
   ```python
@@ -451,14 +482,15 @@ El backend expone los siguientes endpoints:
 ## Tecnologías Utilizadas
 
 - **Backend:** Flask 3.0+ (Python)
-- **Transcripción:** faster-Whisper (local con CUDA) / OpenAI Whisper API (nube)
-- **IA:** Google Gemini API con Context Caching
+- **Transcripción:** faster-Whisper (local con CUDA) / OpenAI Whisper API (`whisper-1`, nube sin GPU)
+- **IA:** Google Gemini API con Context Caching (modelo configurable en `config.py`)
 - **Audio:** FFmpeg + Pydub
 - **Slides:** Google Cloud Vision API (opcional)
 - **Frontend:** HTML5, CSS3, JavaScript vanilla (SPA, tema oscuro)
 - **PDF:** fpdf2 con renderizado aspect-ratio contain y soporte de imágenes incrustadas
 - **Túnel remoto:** cloudflared (opcional, para acceso externo seguro)
-- **Almacenamiento:** Sistema de archivos (JSONL, Markdown, JSON, TXT, JPG) — sin base de datos
+- **Ventana nativa:** PyQt6 + QWebEngineView (fallback a pywebview o navegador)
+- **Almacenamiento:** Sistema de archivos local — `.jsonl` (transcripciones), `.md` (resúmenes y documentos), `.json` (historiales de chat), `.jpg` (imágenes de slides) — sin base de datos
 
 ---
 
