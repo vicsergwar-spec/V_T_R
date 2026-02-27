@@ -14,6 +14,10 @@ Sistema completo de procesamiento de videos de clases académicas. Transcribe vi
 - **Organización automática** de archivos por materia/carpeta y tema
 - **Soporte para múltiples formatos** de video (mp4, mkv, avi, mov, webm, etc.)
 - **Lanzadores automáticos** (`run.bat` / `run.sh`) — actualizan el código, instalan dependencias y arrancan el servidor con un doble clic
+- **Visor de logs híbrido** — botones de rango rápido (1h, 2h, 4h, 24h, Todo) combinados con selectores manuales de hora inicio/fin y botón de copiar al portapapeles
+- **Acceso remoto** — servidor escucha en `0.0.0.0` con túnel seguro vía cloudflared para consultar chats y descargar archivos desde cualquier red
+- **PDF con aspect-ratio inteligente** — las imágenes de slides se renderizan con proporciones correctas (`contain`) y centrado horizontal automático
+- **Sub-imágenes persistentes** — diagramas, fotos y figuras incrustadas dentro de los slides se extraen, guardan y vinculan automáticamente
 
 ---
 
@@ -26,6 +30,7 @@ Sistema completo de procesamiento de videos de clases académicas. Transcribe vi
 - **API Key de Gemini** (Google AI Studio) — obligatoria
 - **API Key de OpenAI** (opcional, para usar Whisper en la nube sin GPU)
 - **API Key de Google Vision** (opcional, para extracción de slides)
+- **cloudflared** (opcional, para acceso remoto fuera de la red local)
 
 ---
 
@@ -172,7 +177,7 @@ source .venv/bin/activate       # Linux / macOS
 python app.py
 ```
 
-El servidor inicia en **http://127.0.0.1:5000**
+El servidor inicia en **http://localhost:5000** (accesible desde la red local en `http://<IP-de-tu-PC>:5000`).
 
 ---
 
@@ -221,6 +226,72 @@ El servidor inicia en **http://127.0.0.1:5000**
 4. El historial de este chat también se guarda por separado y persiste entre sesiones
 5. Para borrar, usar el botón **"Limpiar chat"** dentro del chat de carpeta
 
+### Visor de Logs del Sistema
+
+La sección **"Logs"** permite monitorear toda la actividad del servidor en tiempo real con un sistema de filtrado híbrido:
+
+1. **Rangos rápidos** — botones predefinidos que filtran por ventana de tiempo relativa:
+   - `1h` (última hora, activo por defecto), `2h`, `4h`, `24h`, `Todo` (sin límite)
+2. **Selectores manuales** — dos campos de hora (`Inicio` y `Fin`) para definir un rango absoluto preciso (ej: de 14:30 a 15:45). Funcionan en combinación con el rango rápido seleccionado
+3. **Copiar Logs** — copia al portapapeles el texto plano de todos los logs visibles (ya filtrados), listo para pegar en un reporte o chat
+4. **Limpiar vista** — borra los logs acumulados en memoria del navegador (no afecta al servidor)
+
+Los logs se actualizan automáticamente cada 3 segundos mediante polling. El buffer del servidor almacena hasta 2000 entradas por sesión.
+
+### Acceso Remoto (cloudflared)
+
+El servidor escucha en `0.0.0.0` (todas las interfaces de red), lo que permite:
+
+- **Red local**: acceder desde otro dispositivo en la misma red WiFi usando `http://<IP-de-tu-PC>:5000`
+- **Fuera de la red local**: usar un túnel seguro con cloudflared para acceder desde cualquier lugar (ej: desde el trabajo)
+
+#### Configurar acceso remoto con cloudflared
+
+1. **Instalar cloudflared** en la PC donde corre V_T_R:
+   - Windows: `winget install Cloudflare.cloudflared`
+   - Linux: seguir la guía en https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+
+2. **Iniciar el túnel** desde la API del sistema:
+   ```bash
+   # Iniciar túnel (genera una URL pública temporal tipo https://xxx.trycloudflare.com)
+   curl -X POST http://localhost:5000/api/tunnel/start
+
+   # Verificar estado
+   curl http://localhost:5000/api/tunnel/status
+
+   # Detener túnel
+   curl -X POST http://localhost:5000/api/tunnel/stop
+   ```
+
+3. **Desde el trabajo o cualquier red externa**, abre la URL generada en el navegador. Tendrás acceso completo a:
+   - Consultar chats por clase y por carpeta
+   - Descargar slides en PDF y Markdown
+   - Ver resúmenes y transcripciones
+   - Monitorear logs del servidor
+
+> **Nota de seguridad:** la URL de cloudflared es pública pero aleatoria y temporal. Solo compártela con quien necesites. El túnel se cierra al detenerlo o al apagar el servidor.
+
+> **Nota:** el procesamiento de video (transcripción con Whisper + GPU) solo se ejecuta en la PC local. El acceso remoto está pensado para consulta y descarga, no para subir nuevos videos.
+
+### Renderizado de PDF con Aspect-Ratio
+
+Al descargar los slides en formato PDF, cada imagen se renderiza respetando sus proporciones originales:
+
+- **Aspect-ratio `contain`**: la imagen se escala para caber dentro del ancho disponible de la página sin recortarse ni deformarse
+- **Centrado horizontal automático**: si la imagen es más angosta que el ancho de página, se centra visualmente
+- **Control de altura máxima**: las imágenes no exceden 110mm de alto; si no caben en la página actual, se insertan en una página nueva
+- **Resolución**: se asume 96 DPI para la conversión de píxeles a milímetros
+
+### Sub-imágenes de Slides
+
+Durante la extracción de slides, el sistema detecta automáticamente figuras, diagramas y fotos incrustadas dentro de cada fotograma:
+
+1. **Detección**: usa análisis de contornos y diferencia de color respecto al fondo para identificar regiones visuales relevantes (entre 2% y 85% del área del frame)
+2. **Extracción**: cada sub-imagen se recorta y guarda como archivo independiente en `slide_images/slide_NNN_sub_M.jpg`
+3. **Descripción con IA**: si Google Vision API está configurada, cada sub-imagen recibe una descripción técnica automática
+4. **Persistencia**: las sub-imágenes se guardan permanentemente junto a la clase y se vinculan en el documento generado por IA usando etiquetas `<figure>` con ruta directa
+5. **Visualización**: tanto en la interfaz web como en el PDF descargable, las sub-imágenes aparecen integradas en el contexto temático donde corresponden
+
 ### Cómo funciona el Context Caching
 
 Al iniciar cualquier sesión de chat (por clase o por carpeta), el contenido se sube al caché de Gemini (dura **1 hora**). Mientras el caché esté activo, cada mensaje solo envía el historial y la pregunta nueva, sin reenviar el contenido completo. Esto reduce el consumo de tokens significativamente.
@@ -259,7 +330,11 @@ V_T_R/
     └── Materia_Tema/
         ├── transcripcion.jsonl         # Transcripción con timestamps
         ├── resumen.md                  # Resumen estructurado
-        ├── slides/                     # Fotogramas extraídos
+        ├── slides.md                      # Slides crudos (Markdown con refs a imágenes)
+        ├── slides_document.md             # Documento de slides generado por IA
+        ├── slide_images/                  # Fotogramas extraídos + sub-imágenes
+        │   ├── slide_001.jpg              # Imagen principal del slide
+        │   └── slide_001_sub_1.jpg        # Sub-imagen detectada dentro del slide
         ├── chat_historial.json         # Historial de chat por clase
         ├── gemini_cache.txt            # Nombre del caché de Gemini (por clase)
         ├── folder_chat_historial.json  # Historial del chat de carpeta
@@ -310,6 +385,12 @@ El backend expone los siguientes endpoints:
 | `POST` | `/api/folder-chat/<path>/message` | Envía mensaje al chat (por carpeta) |
 | `GET` | `/api/folder-chat/<path>/history` | Obtiene historial (por carpeta) |
 | `POST` | `/api/folder-chat/<path>/clear` | Limpia historial (por carpeta) |
+| `GET` | `/api/logs` | Obtiene logs en memoria (`?since=timestamp`) |
+| `POST` | `/api/tunnel/start` | Inicia túnel cloudflared (devuelve URL pública) |
+| `POST` | `/api/tunnel/stop` | Detiene el túnel cloudflared activo |
+| `GET` | `/api/tunnel/status` | Verifica si el túnel está activo |
+| `POST` | `/api/shutdown` | Apaga el equipo (`shutdown /s /f /t 0`) |
+| `POST` | `/api/stop` | Detiene el servidor Flask |
 
 ---
 
@@ -355,6 +436,16 @@ El backend expone los siguientes endpoints:
 - El script continúa automáticamente con la versión local — no es un error crítico
 - Si hay problemas de permisos en Linux: `chmod +x run.sh`
 
+### cloudflared no encontrado
+- Instalar con `winget install Cloudflare.cloudflared` (Windows) o seguir la guía oficial de Cloudflare
+- Verificar que el ejecutable está en el PATH: `cloudflared --version`
+- El túnel es opcional; el sistema funciona completamente sin él para uso en red local
+
+### El PDF no muestra imágenes de slides
+- Verificar que la carpeta `slide_images/` existe dentro de la clase y contiene archivos `.jpg`
+- Si se procesó antes de la actualización, regenerar el documento de slides desde la vista de detalle de la clase
+- Revisar los logs del servidor para errores de tipo `PDF: no se pudo insertar imagen`
+
 ---
 
 ## Tecnologías Utilizadas
@@ -365,7 +456,9 @@ El backend expone los siguientes endpoints:
 - **Audio:** FFmpeg + Pydub
 - **Slides:** Google Cloud Vision API (opcional)
 - **Frontend:** HTML5, CSS3, JavaScript vanilla (SPA, tema oscuro)
-- **Almacenamiento:** Sistema de archivos (JSONL, Markdown, JSON, TXT) — sin base de datos
+- **PDF:** fpdf2 con renderizado aspect-ratio contain y soporte de imágenes incrustadas
+- **Túnel remoto:** cloudflared (opcional, para acceso externo seguro)
+- **Almacenamiento:** Sistema de archivos (JSONL, Markdown, JSON, TXT, JPG) — sin base de datos
 
 ---
 

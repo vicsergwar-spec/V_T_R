@@ -6,6 +6,7 @@
     <title>V_T_R - Video Transcriptor y Resumen</title>
     <link rel="stylesheet" href="/static/css/style.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 </head>
 <body>
     <div class="app-container">
@@ -56,6 +57,10 @@
                     <span class="status-dot" id="geminiStatus"></span>
                     <span id="geminiText">Verificando Gemini...</span>
                 </div>
+                <span class="status-item remote-badge" id="remoteBadge" style="display:none">
+                    <span class="status-dot active"></span>
+                    <span id="remoteText">Remoto</span>
+                </span>
                 <button class="btn-stop-app" id="stopAppBtn" title="Detiene el servidor y cierra la aplicación">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
                         <circle cx="12" cy="12" r="10"/>
@@ -204,8 +209,17 @@
                         <button class="log-period-btn" data-period="86400">24h</button>
                         <button class="log-period-btn" data-period="0">Todo</button>
                     </div>
+                    <div class="log-time-filters">
+                        <label class="log-time-label">Inicio
+                            <input type="time" id="logTimeStart" class="log-time-input" step="1">
+                        </label>
+                        <label class="log-time-label">Fin
+                            <input type="time" id="logTimeEnd" class="log-time-input" step="1">
+                        </label>
+                    </div>
                     <div class="logs-toolbar-right">
                         <span class="logs-count" id="logsCount">0 entradas</span>
+                        <button class="btn-secondary btn-copy-logs" id="copyLogsBtn">Copiar Logs</button>
                         <button class="btn-secondary btn-clear-logs" id="clearLogsBtn">Limpiar vista</button>
                     </div>
                 </div>
@@ -317,6 +331,13 @@
                         <div class="slides-tab-header">
                             <span class="slides-count" id="slidesCount"></span>
                             <div class="slides-download-btns">
+                                <button class="btn-regenerate-slides" id="regenerateSlidesBtn" title="Regenerar documento IA">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="23 4 23 10 17 10"/>
+                                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                                    </svg>
+                                    Regenerar
+                                </button>
                                 <button class="btn-download-slides" id="downloadSlidesMdBtn" title="Descargar Markdown">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>

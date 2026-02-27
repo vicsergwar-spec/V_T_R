@@ -152,7 +152,12 @@ INSTRUCCIONES ADICIONALES:
 No se pudo generar el resumen automáticamente. Por favor, revisa la transcripción directamente.
 """
 
-    def generate_slides_document(self, slides_raw: str, class_name: str) -> str:
+    def generate_slides_document(
+        self,
+        slides_raw: str,
+        class_name: str,
+        image_map: dict = None,
+    ) -> str:
         """
         Genera un documento de estudio estructurado a partir del contenido
         en crudo de los slides (OCR + descripciones visuales).
@@ -160,6 +165,7 @@ No se pudo generar el resumen automáticamente. Por favor, revisa la transcripci
         Args:
             slides_raw: Contenido de slides.md (formato ## Slide N [MM:SS])
             class_name: Nombre de la clase
+            image_map: Dict {slide_num: [rutas relativas de imágenes]} para vincular
 
         Returns:
             Documento Markdown estructurado y optimizado para lectura y chat IA
@@ -167,9 +173,26 @@ No se pudo generar el resumen automáticamente. Por favor, revisa la transcripci
         if not slides_raw or not slides_raw.strip():
             return ""
 
+        # Filtrar slides con contenido de UI/navegación (campus virtual, menús, etc.)
+        slides_raw = self._filter_ui_slides(slides_raw)
+        if not slides_raw.strip():
+            return ""
+
         max_chars = 80000
         if len(slides_raw) > max_chars:
             slides_raw = slides_raw[:max_chars] + "\n\n[... contenido truncado ...]"
+
+        readable_name = class_name.replace('_', ' ')
+
+        # Construir catálogo de imágenes para el prompt
+        image_catalog = ""
+        if image_map:
+            img_lines = ["## CATÁLOGO DE IMÁGENES DISPONIBLES",
+                         "Usa estas rutas exactas al referenciar figuras en el documento:"]
+            for slide_num, paths in sorted(image_map.items()):
+                for p in paths:
+                    img_lines.append(f"- Slide {slide_num}: `{p}`")
+            image_catalog = "\n".join(img_lines) + "\n\n"
 
         prompt = f"""Eres un asistente académico experto. Se te proporcionan los slides \
 extraídos automáticamente de un video de clase mediante OCR y análisis visual.
@@ -177,36 +200,213 @@ extraídos automáticamente de un video de clase mediante OCR y análisis visual
 CONTENIDO DE LOS SLIDES (datos en crudo):
 {slides_raw}
 
-Tu tarea es transformar estos datos en un **documento de estudio claro y bien estructurado** \
-en formato Markdown. Sigue estas reglas:
+{image_catalog}Tu tarea es transformar estos datos en un **documento de estudio denso y optimizado** \
+en formato Markdown. Sigue estas reglas ESTRICTAS:
+
+## FORMATO DE SALIDA OBLIGATORIO
+
+Empieza el documento con un bloque YAML frontmatter:
+```
+---
+title: "{readable_name}"
+date: (fecha actual YYYY-MM-DD)
+type: slides
+tokens_hint: dense
+---
+```
+
+## REGLAS DE ESTRUCTURA
 
 1. **Organiza el contenido por temas**, NO por número de slide. Agrupa slides relacionados.
 2. **Limpia artefactos de OCR**: corrige errores tipográficos evidentes, elimina texto repetido \
 o fragmentos de interfaz (botones, menús, etc.).
 3. **Estructura con encabezados claros**: usa ## para secciones principales y ### para subsecciones.
-4. **Conserva TODO el contenido académico**: no omitas información. Si hay fórmulas, tablas, \
-diagramas o datos, inclúyelos con formato apropiado.
-5. **Descripciones visuales**: si un slide tenía un diagrama o gráfica (marcados con >), \
-intégralas como notas descriptivas con el formato: *[Diagrama: descripción]*
-6. **Usa viñetas y listas** para información que se preste a ello.
-7. **Destaca conceptos clave** con **negritas**.
-8. NO agregues contenido inventado. Solo organiza y limpia lo que ya existe.
-9. NO incluyas los números de slide ni timestamps en el documento final.
-10. Si los slides están casi vacíos o sin contenido útil, genera un documento breve \
-indicando que no se pudo extraer contenido significativo de la presentación.
+4. **Conserva TODO el contenido académico**: no omitas información.
+5. **Usa viñetas y listas** para información que se preste a ello.
+6. **Destaca conceptos clave** con **negritas**.
+7. NO agregues contenido inventado. Solo organiza y limpia lo que ya existe.
+8. NO incluyas los números de slide ni timestamps en el documento final.
+9. **ELIMINA datos flotantes**: NO dejes años sueltos (ej: "1946", "1837"), siglas aisladas \
+(ej: "BLUEGENE/L", "IBM") ni fragmentos sin contexto. Todo dato DEBE estar dentro de \
+una tabla, lista con viñetas, o párrafo con oración completa.
+10. **NO dejes líneas huérfanas**: cada dato numérico, nombre o sigla debe estar integrado \
+en una estructura lógica (tabla, lista o párrafo). Si un fragmento no encaja en ninguna, \
+descártalo como artefacto de OCR.
 
-NOMBRE DE LA CLASE: {class_name.replace('_', ' ')}
+## TABLAS DENSAS (OBLIGATORIO)
 
-Responde SOLO con el documento Markdown, sin explicaciones adicionales."""
+Cuando haya datos tabulares, comparaciones, listas de características, líneas de tiempo \
+o cualquier información que se pueda estructurar como tabla, USA TABLAS MARKDOWN:
+
+| Columna1 | Columna2 | Columna3 |
+|----------|----------|----------|
+| dato     | dato     | dato     |
+
+Ejemplo para líneas de tiempo históricas:
+| Año | Hito | Descripción |
+|-----|------|-------------|
+
+## DIAGRAMAS MERMAID (OBLIGATORIO para elementos visuales)
+
+Cuando un slide contenga diagramas, flujos, líneas de tiempo, esquemas o relaciones \
+(marcados con > en los datos), GENERA un bloque de código Mermaid equivalente.
+
+Usa estos tipos de diagrama según corresponda:
+- `timeline` para líneas de tiempo
+- `graph TD` o `graph LR` para flujos y esquemas
+- `flowchart` para procesos
+- `classDiagram` para relaciones entre entidades
+
+Ejemplo:
+```mermaid
+timeline
+    title Evolución de la computación
+    1837 : Máquina Analítica (Babbage)
+    1946 : ENIAC
+```
+
+## FIGURAS CON IMÁGENES (OBLIGATORIO)
+
+Para cada fotografía o imagen relevante del catálogo de imágenes, inserta una figura \
+con descripción técnica usando esta sintaxis EXACTA:
+
+<figure class="slide-figure" data-src="RUTA_DE_IMAGEN">
+<figcaption>📷 Descripción técnica breve de la imagen</figcaption>
+</figure>
+
+Donde RUTA_DE_IMAGEN es la ruta exacta del catálogo (ej: slide_images/slide_001.jpg).
+Incluye TODAS las imágenes relevantes del catálogo en el punto temático donde correspondan.
+NO uses el formato *[Diagrama: ...]* ni *[Figura: ...]*
+
+NOMBRE DE LA CLASE: {readable_name}
+
+Responde SOLO con el documento Markdown (incluyendo el frontmatter YAML), sin explicaciones adicionales."""
 
         try:
             response = self.model.generate_content(prompt)
             document = response.text.strip()
+            # Filtro post-generación: eliminar líneas basura flotantes
+            document = self._clean_floating_fragments(document)
             logger.info("Documento de slides generado exitosamente")
             return document
         except Exception as e:
             logger.error(f"Error al generar documento de slides: {e}")
             return ""
+
+    @staticmethod
+    def _clean_floating_fragments(document: str) -> str:
+        """
+        Elimina fragmentos de texto flotante que no pertenecen a ninguna
+        estructura lógica (tabla, lista, párrafo, bloque de código, figure).
+        Ejemplos: años sueltos como '1946', siglas como 'BLUEGENE/L',
+        palabras truncadas como 'es de compu'.
+        """
+        import re
+
+        lines = document.split('\n')
+        cleaned = []
+        in_code_block = False
+        in_table = False
+        in_figure = False
+
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+
+            # Rastrear bloques de código
+            if stripped.startswith('```'):
+                in_code_block = not in_code_block
+                cleaned.append(line)
+                continue
+            if in_code_block:
+                cleaned.append(line)
+                continue
+
+            # Rastrear figures HTML
+            if '<figure' in stripped:
+                in_figure = True
+            if '</figure>' in stripped:
+                in_figure = False
+                cleaned.append(line)
+                continue
+            if in_figure:
+                cleaned.append(line)
+                continue
+
+            # Rastrear tablas
+            if stripped.startswith('|') and '|' in stripped[1:]:
+                in_table = True
+                cleaned.append(line)
+                continue
+            if in_table and not stripped.startswith('|'):
+                in_table = False
+
+            # Preservar siempre: encabezados, listas, frontmatter, separadores, vacías
+            if (stripped.startswith('#') or stripped.startswith('-')
+                    or stripped.startswith('*') or stripped.startswith('>')
+                    or stripped.startswith('|') or stripped == '---'
+                    or stripped == '' or re.match(r'^\d+\.\s+', stripped)):
+                cleaned.append(line)
+                continue
+
+            # Detectar líneas basura flotantes:
+            # - Solo un año (4 dígitos)
+            # - Solo una sigla corta (1-3 palabras, < 30 chars, sin verbo)
+            # - Fragmentos truncados muy cortos sin puntuación final
+            if re.match(r'^\d{4}$', stripped):
+                # Año suelto
+                continue
+            if re.match(r'^[A-Z0-9_/\s\.\-]{1,30}$', stripped) and len(stripped.split()) <= 3:
+                # Sigla o nombre aislado en mayúsculas (ej: "IBM", "BLUEGENE / L")
+                # Verificar que no sea un encabezado legítimo sin #
+                if not any(c.islower() for c in stripped):
+                    continue
+            if (len(stripped) < 40 and not stripped.endswith('.')
+                    and not stripped.endswith(':') and not stripped.endswith(')')
+                    and not stripped.startswith('<') and not stripped.startswith('!')
+                    and re.match(r'^[a-záéíóúñ\s,]+$', stripped, re.IGNORECASE)
+                    and len(stripped.split()) <= 5):
+                # Fragmento truncado corto sin contexto (ej: "es de compu", "ones de computac")
+                continue
+
+            cleaned.append(line)
+
+        return '\n'.join(cleaned)
+
+    @staticmethod
+    def _filter_ui_slides(slides_raw: str) -> str:
+        """
+        Filtra slides que contienen primariamente contenido de UI/navegación
+        (campus virtual, menús, listados de pestañas, etc.) y no contenido académico.
+        """
+        import re
+
+        # Palabras clave que indican contenido de UI/navegación de campus virtual
+        ui_keywords = [
+            'campusvirtual', 'mod/lti/view', 'Mis cursos', 'Servicios para estudiantes',
+            'Tutorías Atención Técnica', 'Envío de actividades', 'Resultado de actividades',
+            'Calificaciones finales', 'Exámenes finales', 'Revisiones y citas',
+            'Herramienta externa', 'Configuración', 'Unirse a la clase',
+            'Filtrar por', 'Próximas clases', 'Clases grabadas',
+            'Calificar asistencia', 'Sin comenzar', 'En progreso',
+        ]
+        ui_pattern = re.compile('|'.join(re.escape(kw) for kw in ui_keywords), re.IGNORECASE)
+
+        sections = re.split(r'(?=^## Slide \d+)', slides_raw, flags=re.MULTILINE)
+        kept = []
+        for section in sections:
+            if not section.strip():
+                continue
+            # Si la sección tiene más de 3 coincidencias de UI, es navegación
+            matches = ui_pattern.findall(section)
+            if len(matches) >= 3:
+                # Extraer número de slide para log
+                m = re.match(r'## Slide (\d+)', section)
+                num = m.group(1) if m else '?'
+                logger.info(f"Slide {num} filtrado: contenido de UI/navegación ({len(matches)} coincidencias)")
+                continue
+            kept.append(section)
+
+        return '\n'.join(kept)
 
     def _build_cached_model(self, system_instruction: str, existing_cache_name: str = None):
         """

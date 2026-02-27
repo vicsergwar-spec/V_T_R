@@ -71,6 +71,7 @@ const elements = {
     slidesBtnTab: document.getElementById('tab-btn-slides'),
     slidesContent: document.getElementById('slidesContent'),
     slidesCount: document.getElementById('slidesCount'),
+    regenerateSlidesBtn: document.getElementById('regenerateSlidesBtn'),
     downloadSlidesMdBtn: document.getElementById('downloadSlidesMdBtn'),
     downloadSlidesPdfBtn: document.getElementById('downloadSlidesPdfBtn'),
 
@@ -117,13 +118,20 @@ const elements = {
     logsContent: document.getElementById('logsContent'),
     logsCount: document.getElementById('logsCount'),
     clearLogsBtn: document.getElementById('clearLogsBtn'),
+    copyLogsBtn: document.getElementById('copyLogsBtn'),
+    logTimeStart: document.getElementById('logTimeStart'),
+    logTimeEnd: document.getElementById('logTimeEnd'),
 
     // Toast
     toastContainer: document.getElementById('toastContainer'),
 
     // Cancel / Stop
     cancelProcessBtn: document.getElementById('cancelProcessBtn'),
-    stopAppBtn: document.getElementById('stopAppBtn')
+    stopAppBtn: document.getElementById('stopAppBtn'),
+
+    // Remoto
+    remoteBadge: document.getElementById('remoteBadge'),
+    remoteText: document.getElementById('remoteText')
 };
 
 // ============================================
@@ -143,6 +151,7 @@ document.addEventListener('DOMContentLoaded', () => {
     checkSystemStatus();
     loadClasses();
     startVramPolling();
+    detectRemoteConnection();
 });
 
 // ============================================
@@ -282,6 +291,15 @@ function startVramPolling() {
     // Primera llamada inmediata; luego cada 3 segundos
     fetchVramStats();
     setInterval(fetchVramStats, 3000);
+}
+
+function detectRemoteConnection() {
+    const h = location.hostname;
+    const isLocal = h === '127.0.0.1' || h === 'localhost' || h === '::1';
+    if (!isLocal) {
+        elements.remoteBadge.style.display = 'flex';
+        elements.remoteText.textContent = `Remoto (${h})`;
+    }
 }
 
 // ============================================
@@ -584,11 +602,23 @@ async function processOneVideo(item, currentNum, totalNum) {
 
     async function pollStatus() {
         try {
-            const res = await fetch('/api/process/status');
-            const s = await res.json();
+            const res = await fetch('/api/system/status');
+            const data = await res.json();
+            const s = data.process;
             if (s.percent > 0) {
                 const detail = s.detail ? ` (${s.detail})` : '';
-                updateProgress(s.percent, s.step + detail + elapsedStr());
+                let gpuTag = '';
+                if (data.gpu && data.gpu.gpu_available) {
+                    const g = data.gpu;
+                    gpuTag = ` · GPU ${g.gpu_util_pct ?? 0}%`;
+                    if (g.gpu_temp_c != null) gpuTag += ` ${g.gpu_temp_c}°C`;
+                    gpuTag += ` · VRAM ${g.vram_used_gb.toFixed(1)}/${g.vram_total_gb.toFixed(1)}GB`;
+                }
+                updateProgress(s.percent, s.step + detail + gpuTag + elapsedStr());
+            }
+            // Actualizar panel VRAM del nav también
+            if (data.gpu && data.gpu.gpu_available) {
+                updateVramDisplay(data.gpu);
             }
         } catch (_) { /* servidor ocupado */ }
     }
@@ -981,6 +1011,9 @@ function initDetail() {
     // Botones descargar slides
     elements.downloadSlidesMdBtn.addEventListener('click',  () => downloadSlides('markdown'));
     elements.downloadSlidesPdfBtn.addEventListener('click', () => downloadSlides('pdf'));
+
+    // Botón regenerar slides
+    elements.regenerateSlidesBtn.addEventListener('click', regenerateSlidesDocument);
 }
 
 function switchTab(tabName) {
@@ -1137,6 +1170,100 @@ function buildAiMarkdown(segments, className, date, duration) {
 
 // ── Slides / Presentación ─────────────────────
 
+async function regenerateSlidesDocument() {
+    if (!state.currentClass) return;
+    const btn = elements.regenerateSlidesBtn;
+    const origHTML = btn.innerHTML;
+    btn.disabled = true;
+
+    // Crear barra de progreso inline debajo del header de slides
+    const progressEl = document.createElement('div');
+    progressEl.className = 'regen-progress';
+    progressEl.innerHTML = `
+        <div class="regen-progress-bar"><div class="regen-progress-fill" id="regenFill"></div></div>
+        <div class="regen-progress-info">
+            <span class="regen-step" id="regenStep">Iniciando...</span>
+            <span class="regen-eta" id="regenEta"></span>
+        </div>`;
+    const tabHeader = btn.closest('.slides-tab-header');
+    if (tabHeader && tabHeader.nextSibling) {
+        tabHeader.parentNode.insertBefore(progressEl, tabHeader.nextSibling);
+    } else {
+        elements.slidesContent.parentNode.insertBefore(progressEl, elements.slidesContent);
+    }
+
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin">
+        <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+    </svg> Regenerando...`;
+
+    try {
+        const classId = state.currentClass.id;
+        const url = `/api/classes/${encodeURIComponent(classId).replace(/%2F/g, '/')}/slides/regenerate`;
+        const res = await fetch(url, { method: 'POST' });
+
+        if (!res.ok) {
+            const errData = await res.json();
+            showToast('error', 'Error', errData.error || 'No se pudo regenerar');
+            return;
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let done = false;
+
+        while (!done) {
+            const { value, done: streamDone } = await reader.read();
+            done = streamDone;
+            if (value) buffer += decoder.decode(value, { stream: true });
+
+            // Parsear eventos SSE del buffer
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            let eventType = '';
+            let eventData = '';
+            for (const line of lines) {
+                if (line.startsWith('event: ')) {
+                    eventType = line.slice(7).trim();
+                } else if (line.startsWith('data: ')) {
+                    eventData = line.slice(6);
+                    try {
+                        const data = JSON.parse(eventData);
+                        const fill = document.getElementById('regenFill');
+                        const step = document.getElementById('regenStep');
+                        const eta = document.getElementById('regenEta');
+
+                        if (eventType === 'progress') {
+                            if (fill) fill.style.width = `${data.percent}%`;
+                            if (step) step.textContent = data.step;
+                            if (eta) eta.textContent = data.eta ? `ETA: ${data.eta}` : '';
+                        } else if (eventType === 'done') {
+                            if (fill) fill.style.width = '100%';
+                            if (step) step.textContent = `Completado en ${data.elapsed}s`;
+                            showToast('success', 'Regenerado', `Documento actualizado en ${data.elapsed}s`);
+                            setTimeout(async () => {
+                                await loadSlides(classId);
+                            }, 500);
+                        } else if (eventType === 'error') {
+                            showToast('error', 'Error', data.error || 'Error desconocido');
+                        }
+                    } catch (_) { /* ignorar líneas no-JSON */ }
+                    eventType = '';
+                    eventData = '';
+                }
+            }
+        }
+    } catch (err) {
+        showToast('error', 'Error', 'No se pudo conectar al servidor');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = origHTML;
+        // Remover barra de progreso después de 1.5s
+        setTimeout(() => { if (progressEl.parentNode) progressEl.parentNode.removeChild(progressEl); }, 1500);
+    }
+}
+
 async function loadSlides(classId) {
     try {
         const res  = await fetch(`/api/classes/${classId}/slides`);
@@ -1153,6 +1280,8 @@ async function loadSlides(classId) {
                 '<div class="slides-document markdown-body">' +
                 parseMarkdown(data.document) +
                 '</div>';
+            // Renderizar bloques Mermaid
+            renderMermaidBlocks(elements.slidesContent);
             return;
         }
 
@@ -1163,12 +1292,14 @@ async function loadSlides(classId) {
             elements.slidesContent.innerHTML = '<p class="text-muted">No se encontró contenido en los slides</p>';
             return;
         }
+        const imgBase = `/api/classes/${classId}`;
         elements.slidesContent.innerHTML = slides.map(s => `
             <div class="slide-card">
                 <div class="slide-card-header">
                     <span class="slide-num">Slide ${s.num}</span>
                     ${s.ts ? `<span class="slide-ts">${s.ts}</span>` : ''}
                 </div>
+                ${s.image ? `<div class="slide-card-image"><img src="${imgBase}/${escapeHtml(s.image)}" alt="Slide ${s.num}" loading="lazy"></div>` : ''}
                 ${s.text ? `<div class="slide-card-text">${escapeHtml(s.text)}</div>` : ''}
                 ${s.visual ? `<div class="slide-card-visual">
                     <span class="visual-label">Descripción visual</span>
@@ -1214,13 +1345,30 @@ function _assignSlideBody(slide, rawBody) {
     if (!body) {
         slide.text = '';
         slide.visual = '';
+        slide.image = '';
         return;
     }
     const lines = body.split('\n');
-    const textLines   = lines.filter(l => !l.startsWith('> '));
-    const visualLines = lines.filter(l =>  l.startsWith('> ')).map(l => l.slice(2));
+    const textLines   = [];
+    const visualLines = [];
+    let imageRef = '';
+
+    for (const l of lines) {
+        // Capturar referencias a imágenes ![alt](path)
+        const imgMatch = l.match(/^!\[.*?\]\((.+?)\)/);
+        if (imgMatch) {
+            if (!imageRef) imageRef = imgMatch[1];
+            continue;
+        }
+        if (l.startsWith('> ')) {
+            visualLines.push(l.slice(2));
+        } else {
+            textLines.push(l);
+        }
+    }
 
     slide.visual = visualLines.join('\n').trim();
+    slide.image = imageRef;
 
     const textCandidate = textLines.join('\n').trim();
     // Fallback: si el filtrado de '> ' dejó el texto vacío pero hay contenido,
@@ -1833,6 +1981,60 @@ function escapeHtml(text) {
 function parseMarkdown(text) {
     if (!text) return '';
 
+    // Eliminar bloque YAML frontmatter (---...---)
+    text = text.replace(/^---\n[\s\S]*?\n---\n?/, '');
+
+    // Extraer bloques de código (Mermaid y otros) antes de procesar líneas
+    const codeBlocks = [];
+    text = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+        const idx = codeBlocks.length;
+        if (lang === 'mermaid') {
+            codeBlocks.push(`<div class="mermaid">${code.trim()}</div>`);
+        } else {
+            codeBlocks.push(`<pre><code>${code.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</code></pre>`);
+        }
+        return `\x00CODEBLOCK_${idx}\x00`;
+    });
+
+    // Extraer <figure> HTML antes de procesar — resolver data-src a <img> reales
+    const figureBlocks = [];
+    text = text.replace(/<figure[\s\S]*?<\/figure>/g, (match) => {
+        const idx = figureBlocks.length;
+        // Si tiene data-src, insertar <img> real vinculada a la clase actual
+        const srcMatch = match.match(/data-src="([^"]+)"/);
+        if (srcMatch && state.currentClass) {
+            const imgPath = srcMatch[1];
+            const imgUrl = `/api/classes/${encodeURIComponent(state.currentClass.id).replace(/%2F/g, '/')}/${imgPath}`;
+            const captionMatch = match.match(/<figcaption>([\s\S]*?)<\/figcaption>/);
+            const caption = captionMatch ? captionMatch[1] : '';
+            figureBlocks.push(
+                `<figure class="slide-figure">` +
+                `<img src="${imgUrl}" alt="${caption.replace(/"/g, '&quot;')}" loading="lazy">` +
+                `<figcaption>${caption}</figcaption></figure>`
+            );
+        } else {
+            figureBlocks.push(match);
+        }
+        return `\x00FIGURE_${idx}\x00`;
+    });
+
+    // Extraer tablas markdown antes de procesar líneas
+    const tableBlocks = [];
+    const tableRe = /(?:^|\n)(\|.+\|\n\|[-| :]+\|\n(?:\|.+\|\n?)*)/g;
+    text = text.replace(tableRe, (match) => {
+        const idx = tableBlocks.length;
+        const rows = match.trim().split('\n');
+        if (rows.length < 2) { tableBlocks.push(match); return `\x00TABLE_${idx}\x00`; }
+        const headers = rows[0].split('|').filter(c => c.trim() !== '').map(c => `<th>${processInline(c.trim())}</th>`).join('');
+        let tbody = '';
+        for (let r = 2; r < rows.length; r++) {
+            const cells = rows[r].split('|').filter(c => c.trim() !== '').map(c => `<td>${processInline(c.trim())}</td>`).join('');
+            tbody += `<tr>${cells}</tr>`;
+        }
+        tableBlocks.push(`<table class="dense-table"><thead><tr>${headers}</tr></thead><tbody>${tbody}</tbody></table>`);
+        return `\x00TABLE_${idx}\x00`;
+    });
+
     // Procesar línea por línea para mejor manejo de listas
     const lines = text.split('\n');
     let html = '';
@@ -1842,6 +2044,26 @@ function parseMarkdown(text) {
 
     for (let i = 0; i < lines.length; i++) {
         let line = lines[i];
+
+        // Placeholders
+        const placeholderMatch = line.trim().match(/^\x00(CODEBLOCK|FIGURE|TABLE)_(\d+)\x00$/);
+        if (placeholderMatch) {
+            if (inList) { html += `</${listTag}>`; inList = false; listTag = null; }
+            if (inParagraph) { html += '</p>'; inParagraph = false; }
+            const [, type, idx] = placeholderMatch;
+            if (type === 'CODEBLOCK') html += codeBlocks[parseInt(idx)];
+            else if (type === 'FIGURE') html += figureBlocks[parseInt(idx)];
+            else if (type === 'TABLE') html += tableBlocks[parseInt(idx)];
+            continue;
+        }
+
+        // Línea separadora ---
+        if (line.trim() === '---') {
+            if (inList) { html += `</${listTag}>`; inList = false; listTag = null; }
+            if (inParagraph) { html += '</p>'; inParagraph = false; }
+            html += '<hr>';
+            continue;
+        }
 
         // Headers
         if (line.match(/^### /)) {
@@ -1918,6 +2140,29 @@ function processInline(text) {
         .replace(/`(.*?)`/g, '<code>$1</code>');
 }
 
+function renderMermaidBlocks(container) {
+    if (typeof mermaid === 'undefined') return;
+    mermaid.initialize({ startOnLoad: false, theme: 'dark', themeVariables: {
+        primaryColor: '#6366f1', primaryTextColor: '#f1f5f9',
+        primaryBorderColor: '#818cf8', lineColor: '#94a3b8',
+        secondaryColor: '#1a1e27', tertiaryColor: '#252a36',
+        background: '#1d212b', mainBkg: '#1d212b', nodeBorder: '#818cf8',
+    }});
+    const blocks = container.querySelectorAll('.mermaid');
+    blocks.forEach((block, i) => {
+        const id = `mermaid-${Date.now()}-${i}`;
+        try {
+            mermaid.render(id, block.textContent.trim()).then(({ svg }) => {
+                block.innerHTML = svg;
+            }).catch(() => {
+                block.innerHTML = `<pre class="mermaid-fallback">${block.textContent}</pre>`;
+            });
+        } catch {
+            block.innerHTML = `<pre class="mermaid-fallback">${block.textContent}</pre>`;
+        }
+    });
+}
+
 // ============================================
 // Visor de Logs
 // ============================================
@@ -1939,10 +2184,27 @@ function initLogs() {
         });
     });
 
+    elements.logTimeStart.addEventListener('change', renderLogs);
+    elements.logTimeEnd.addEventListener('change', renderLogs);
+
     elements.clearLogsBtn.addEventListener('click', () => {
         logsState.allLogs = [];
         logsState.lastServerTime = Date.now() / 1000;
         renderLogs();
+    });
+
+    elements.copyLogsBtn.addEventListener('click', () => {
+        const filtered = getFilteredLogs();
+        const text = filtered.map(e => {
+            const d = new Date(e.ts * 1000);
+            const t = d.toTimeString().slice(0, 8);
+            return `[${t}][${e.lvl}][${e.src}] ${e.msg}`;
+        }).join('\n');
+        navigator.clipboard.writeText(text).then(() => {
+            showToast('Logs copiados al portapapeles', 'success');
+        }).catch(() => {
+            showToast('Error al copiar logs', 'error');
+        });
     });
 }
 
@@ -1977,11 +2239,24 @@ async function fetchLogs() {
     }
 }
 
+function getFilteredLogs() {
+    const now = Date.now() / 1000;
+    const periodCutoff = logsState.period === 0 ? 0 : now - logsState.period;
+    const startVal = elements.logTimeStart.value;
+    const endVal = elements.logTimeEnd.value;
+    return logsState.allLogs.filter(e => {
+        if (e.ts < periodCutoff) return false;
+        const d = new Date(e.ts * 1000);
+        const t = d.toTimeString().slice(0, 8);
+        if (startVal && t < startVal) return false;
+        if (endVal && t > endVal) return false;
+        return true;
+    });
+}
+
 function renderLogs() {
     const container = elements.logsContent;
-    const now = Date.now() / 1000;
-    const cutoff = logsState.period === 0 ? 0 : now - logsState.period;
-    const filtered = logsState.allLogs.filter(e => e.ts >= cutoff);
+    const filtered = getFilteredLogs();
 
     elements.logsCount.textContent = `${filtered.length} entradas`;
 

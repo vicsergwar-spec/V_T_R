@@ -60,3 +60,7 @@ desktop.ini
 # PyTorch models cache
 *.pt
 *.pth
+
+clases/
+
+temp/

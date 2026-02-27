@@ -124,28 +124,57 @@ def _try_webview_window(url: str) -> bool:
 # Punto de entrada
 # ──────────────────────────────────────────────
 
+def _get_local_ip() -> str:
+    """Detecta la IP local de la red (no 127.0.0.1)."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+
+def _print_access_info(port: int):
+    """Muestra las URLs de acceso local y remoto."""
+    local_ip = _get_local_ip()
+    print("\n" + "=" * 56)
+    print("  V_T_R — Video Transcriptor y Resumen")
+    print("=" * 56)
+    print(f"  Local:       http://127.0.0.1:{port}")
+    print(f"  Red local:   http://{local_ip}:{port}")
+    print(f"  Remoto:      POST /api/tunnel/start (cloudflared)")
+    print("-" * 56)
+    print("  GPU procesa localmente sin importar el origen")
+    print("  de la subida. Chats y descargas funcionan desde")
+    print("  cualquier cliente conectado.")
+    print("=" * 56 + "\n")
+
+
 if __name__ == '__main__':
     import config
 
-    host = '127.0.0.1' if config.FLASK_HOST in ('0.0.0.0', '') else config.FLASK_HOST
-    url  = f"http://{host}:{config.FLASK_PORT}"
+    # Flask escucha en 0.0.0.0 para acceso remoto; la ventana local apunta a 127.0.0.1
+    local_url = f"http://127.0.0.1:{config.FLASK_PORT}"
 
     # Arrancar Flask en hilo daemon
     flask_thread = threading.Thread(target=_start_flask, daemon=True, name="flask-server")
     flask_thread.start()
 
-    if not _wait_for_server(host, config.FLASK_PORT):
+    if not _wait_for_server('127.0.0.1', config.FLASK_PORT):
         print("[!] El servidor tardó demasiado en arrancar. Abriendo de todos modos...")
 
+    _print_access_info(config.FLASK_PORT)
+
     # Intentar ventana nativa (Qt → pywebview → navegador)
-    if _try_qt_window(url):
+    if _try_qt_window(local_url):
         pass  # Qt manejó todo; al cerrar la ventana el proceso termina
-    elif _try_webview_window(url):
+    elif _try_webview_window(local_url):
         pass  # pywebview manejó todo
     else:
-        print(f"\n  [OK] Servidor listo en {url}")
         print("  Abriendo navegador automaticamente...")
-        webbrowser.open(url)
+        webbrowser.open(local_url)
         print("  Presiona Ctrl+C para detener.\n")
         try:
             flask_thread.join()

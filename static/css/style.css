@@ -283,6 +283,15 @@ body {
     border-color: var(--error);
 }
 
+.remote-badge {
+    padding: 4px 10px;
+    background: rgba(99, 102, 241, 0.1);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    border-radius: var(--radius-sm);
+    font-size: 0.7rem;
+    color: var(--accent-light);
+}
+
 /* ============================================
    Contenido Principal
    ============================================ */
@@ -1395,7 +1404,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 16px;
+    margin-bottom: 8px;
 }
 
 .slides-count {
@@ -1443,8 +1452,8 @@ body {
 .slides-content {
     display: flex;
     flex-direction: column;
-    gap: 14px;
-    max-height: 70vh;
+    gap: 6px;
+    max-height: 75vh;
     overflow-y: auto;
     padding-right: 4px;
 }
@@ -1483,16 +1492,16 @@ body {
 }
 
 .slide-card-text {
-    padding: 14px 16px;
-    font-size: 14px;
+    padding: 8px 12px;
+    font-size: 13px;
     color: var(--text-primary);
-    line-height: 1.65;
+    line-height: 1.5;
     white-space: pre-wrap;
 }
 
 .slide-card-visual {
-    margin: 0 16px 14px;
-    padding: 10px 14px;
+    margin: 0 12px 8px;
+    padding: 6px 10px;
     background: rgba(245, 158, 11, 0.07);
     border: 1px solid rgba(245, 158, 11, 0.25);
     border-radius: var(--radius-sm);
@@ -1520,39 +1529,44 @@ body {
 .slides-document {
     background: var(--bg-card);
     border: 1px solid var(--border-color);
-    border-radius: var(--radius-lg);
-    padding: 32px;
-    line-height: 1.8;
+    border-radius: var(--radius-md);
+    padding: 18px 22px;
+    line-height: 1.55;
 }
 .slides-document h1 {
-    font-size: 1.75rem;
-    margin-bottom: 24px;
-    padding-bottom: 16px;
-    border-bottom: 1px solid var(--border-color);
-}
-.slides-document h2 {
-    font-size: 1.25rem;
-    color: var(--accent-light);
-    margin-top: 28px;
+    font-size: 1.5rem;
     margin-bottom: 12px;
     padding-bottom: 8px;
     border-bottom: 1px solid var(--border-color);
 }
+.slides-document h2 {
+    font-size: 1.15rem;
+    color: var(--accent-light);
+    margin-top: 16px;
+    margin-bottom: 6px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border-color);
+}
 .slides-document h3 {
-    font-size: 1.1rem;
+    font-size: 1.0rem;
     color: var(--text-primary);
-    margin-top: 20px;
-    margin-bottom: 8px;
+    margin-top: 10px;
+    margin-bottom: 4px;
 }
 .slides-document ul, .slides-document ol {
-    padding-left: 24px;
-    margin-bottom: 16px;
-}
-.slides-document li {
+    padding-left: 20px;
     margin-bottom: 8px;
 }
+.slides-document li {
+    margin-bottom: 3px;
+}
 .slides-document p {
-    margin-bottom: 16px;
+    margin-bottom: 8px;
+}
+.slides-document hr {
+    border: none;
+    border-top: 1px solid var(--border-color);
+    margin: 12px 0;
 }
 .slides-document strong {
     color: var(--accent-light);
@@ -1567,6 +1581,179 @@ body {
     border-radius: 4px;
     font-family: var(--font-mono);
     font-size: 0.9em;
+}
+
+/* Tablas densas en documento de slides */
+.slides-document .dense-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 8px 0;
+    font-size: 0.85rem;
+}
+.slides-document .dense-table th,
+.slides-document .dense-table td {
+    padding: 4px 8px;
+    border: 1px solid var(--border-color);
+    text-align: left;
+}
+.slides-document .dense-table th {
+    background: var(--bg-tertiary);
+    color: var(--accent-light);
+    font-weight: 600;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.slides-document .dense-table tr:nth-child(even) {
+    background: rgba(255,255,255,0.02);
+}
+
+/* Mermaid en documento de slides */
+.slides-document .mermaid {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    padding: 12px;
+    margin: 8px 0;
+    text-align: center;
+    overflow-x: auto;
+}
+.slides-document .mermaid svg {
+    max-width: 100%;
+    height: auto;
+}
+.mermaid-fallback {
+    background: var(--bg-secondary);
+    border: 1px dashed var(--border-color);
+    border-radius: var(--radius-sm);
+    padding: 10px;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    white-space: pre-wrap;
+}
+
+/* Placeholder de figura visual (sin imagen real) */
+.visual-placeholder {
+    background: linear-gradient(135deg, rgba(99,102,241,0.08), rgba(129,140,248,0.05));
+    border: 1px dashed var(--accent-primary);
+    border-radius: var(--radius-sm);
+    padding: 10px 14px;
+    margin: 6px 0;
+    text-align: center;
+}
+.visual-placeholder figcaption {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    font-style: italic;
+}
+
+/* Figura con imagen real */
+.slide-figure {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    margin: 8px 0;
+    overflow: hidden;
+    text-align: center;
+}
+.slide-figure img {
+    width: 100%;
+    max-height: 350px;
+    object-fit: contain;
+    display: block;
+    background: var(--bg-primary);
+}
+.slide-figure figcaption {
+    padding: 6px 10px;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    font-style: italic;
+    border-top: 1px solid var(--border-color);
+}
+
+/* Botón Regenerar slides */
+.btn-regenerate-slides {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: var(--bg-tertiary);
+    color: var(--accent-secondary);
+    border: 1px solid var(--accent-primary);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 0.8rem;
+    transition: all var(--transition-fast);
+}
+.btn-regenerate-slides:hover {
+    background: var(--accent-glow);
+    color: var(--accent-light);
+}
+.btn-regenerate-slides:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.btn-regenerate-slides svg {
+    width: 14px;
+    height: 14px;
+}
+
+/* Progreso de regeneración */
+.regen-progress {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    padding: 10px 14px;
+    margin-bottom: 10px;
+    animation: fadeIn 0.2s ease;
+}
+.regen-progress-bar {
+    height: 6px;
+    background: var(--bg-tertiary);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 6px;
+}
+.regen-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+    border-radius: 3px;
+    transition: width 0.4s ease;
+    width: 0%;
+}
+.regen-progress-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.regen-step {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+.regen-eta {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+}
+
+/* Spinner para botón regenerar */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 1s linear infinite; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Imagen en tarjeta de slide */
+.slide-card-image {
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    max-height: 300px;
+    overflow: hidden;
+}
+.slide-card-image img {
+    width: 100%;
+    height: auto;
+    display: block;
+    object-fit: contain;
+    max-height: 300px;
 }
 
 /* Transcripción */
@@ -2167,6 +2354,43 @@ body {
     background: var(--accent-primary);
     border-color: var(--accent-primary);
     color: #fff;
+}
+
+.log-time-filters {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+.log-time-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.log-time-input {
+    padding: 4px 8px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 0.8rem;
+    font-family: inherit;
+    cursor: pointer;
+    transition: border-color var(--transition-fast);
+}
+
+.log-time-input:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+}
+
+.btn-copy-logs {
+    padding: 5px 14px;
+    font-size: 0.8rem;
 }
 
 .logs-toolbar-right {

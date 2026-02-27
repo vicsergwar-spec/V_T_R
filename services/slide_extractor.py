@@ -102,14 +102,23 @@ class SlideExtractor:
         video_path: str,
         temp_dir: str,
         progress_callback=None,
+        persist_dir: str = None,
     ) -> list[dict]:
         """
         Extrae y analiza todos los slides del video.
 
+        Args:
+            video_path: Ruta al video
+            temp_dir: Directorio temporal para frames
+            progress_callback: Callback(current, total, msg)
+            persist_dir: Si se indica, guarda las imágenes en esta carpeta
+                         (típicamente la carpeta de la clase)
+
         Returns:
             Lista de dicts:
                 frame_num (int), timestamp (float), text (str),
-                visual_description (str), has_visual (bool)
+                visual_description (str), has_visual (bool),
+                image_file (str) — nombre del archivo guardado (si persist_dir)
         """
         video_path = Path(video_path)
         frames_dir = Path(temp_dir) / "slide_frames"
@@ -132,6 +141,12 @@ class SlideExtractor:
         if not frame_pairs:
             return []
 
+        # Preparar directorio de imágenes persistentes
+        images_dir = None
+        if persist_dir:
+            images_dir = Path(persist_dir) / "slide_images"
+            images_dir.mkdir(exist_ok=True)
+
         slides = []
         total = len(frame_pairs)
 
@@ -140,6 +155,23 @@ class SlideExtractor:
                 progress_callback(i, total, f"Analizando slide {i}/{total}…")
             try:
                 slide = self._analyze_frame(frame_path, i, timestamp)
+
+                # Persistir imagen en carpeta de la clase
+                image_filename = ""
+                if images_dir:
+                    import shutil
+                    dest_name = f"slide_{i:03d}.jpg"
+                    dest_path = images_dir / dest_name
+                    shutil.copy2(frame_path, dest_path)
+                    image_filename = f"slide_images/{dest_name}"
+
+                    # Recursividad: detectar sub-imágenes dentro del frame
+                    sub_images = self._extract_sub_images(frame_path, i, images_dir)
+                    if sub_images:
+                        slide["sub_images"] = sub_images
+                        logger.info(f"  Slide {i}: {len(sub_images)} sub-imagen(es) detectada(s)")
+
+                slide["image_file"] = image_filename
                 slides.append(slide)
                 icon = "📊" if slide["has_visual"] else "📝"
                 logger.info(
@@ -150,7 +182,8 @@ class SlideExtractor:
                 logger.error(f"Error en slide {i}: {e}")
                 slides.append(
                     dict(frame_num=i, timestamp=timestamp,
-                         text="", visual_description="", has_visual=False)
+                         text="", visual_description="", has_visual=False,
+                         image_file="")
                 )
 
         self._cleanup_frames(frames_dir)
@@ -158,8 +191,8 @@ class SlideExtractor:
 
     def format_slides_for_context(self, slides: list[dict]) -> str:
         """
-        Convierte la lista de slides a texto Markdown para el contexto de
-        resumen y chat. Solo incluye slides con contenido real.
+        Convierte la lista de slides a texto Markdown optimizado para IA.
+        Solo texto académico, sin referencias a imágenes ni rutas de archivo.
         """
         useful = [s for s in slides if s.get("text") or s.get("visual_description")]
         if not useful:
@@ -173,13 +206,17 @@ class SlideExtractor:
                 lines.append(slide["text"])
             if slide.get("visual_description"):
                 lines.append(f"\n*[Elemento visual: {slide['visual_description']}]*")
+            # Sub-imágenes: solo su descripción textual para IA
+            for sub in slide.get("sub_images", []):
+                if sub.get("description"):
+                    lines.append(f"\n*[Sub-imagen: {sub['description']}]*")
 
         return "\n".join(lines)
 
     def format_slides_for_storage(self, slides: list[dict]) -> str:
         """
-        Genera Markdown en el formato exacto que espera el frontend para mostrar
-        los slides en la pestaña 'Presentación'.
+        Genera Markdown para el frontend (pestaña 'Presentación') y PDF.
+        Incluye referencias a imágenes para visualización.
 
         Formato: secciones ## Slide N [MM:SS] separadas por líneas ---
         Compatible con parseSlidesMarkdown() en app.js.
@@ -192,10 +229,19 @@ class SlideExtractor:
         for slide in useful:
             mm, ss = divmod(int(slide.get("timestamp", 0)), 60)
             section_lines = [f"## Slide {slide['frame_num']} [{mm:02d}:{ss:02d}]"]
+            # Referencia a imagen del slide (para PDF y presentación)
+            if slide.get("image_file"):
+                section_lines.append(f"![Slide {slide['frame_num']}]({slide['image_file']})")
             if slide.get("text"):
                 section_lines.append(slide["text"])
             if slide.get("visual_description"):
                 section_lines.append(f"> {slide['visual_description']}")
+            # Sub-imágenes con referencia visual
+            for sub in slide.get("sub_images", []):
+                if sub.get("file"):
+                    section_lines.append(f"![Sub-imagen]({sub['file']})")
+                if sub.get("description"):
+                    section_lines.append(f"> Sub-imagen: {sub['description']}")
             parts.append("\n".join(section_lines))
 
         return "\n---\n".join(parts)
@@ -531,6 +577,172 @@ class SlideExtractor:
             visual_regions.append(dict(y1=prev_bottom, y2=img_height))
 
         return visual_regions
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Detección y extracción de sub-imágenes dentro de un frame
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _extract_sub_images(
+        self, frame_path: str, slide_num: int, images_dir: Path
+    ) -> list[dict]:
+        """
+        Detecta sub-imágenes (fotos, diagramas incrustados) dentro de un frame
+        usando detección de contornos con diferencia de color respecto al fondo.
+        Guarda cada sub-imagen como archivo independiente.
+
+        Returns:
+            Lista de dicts: {file, description}
+        """
+        try:
+            with Image.open(frame_path) as img:
+                w, h = img.size
+                # Mínimo de tamaño para considerar una sub-imagen
+                min_area = (w * h) * 0.02     # al menos 2% del frame
+                max_area = (w * h) * 0.85     # no más del 85% (sería el frame completo)
+                min_dim = 60                  # mínimo 60px de lado
+
+                gray = img.convert("L")
+                pixels = list(gray.getdata())
+
+                # Detectar el color de fondo dominante (moda de los bordes)
+                border_pixels = []
+                for x in range(w):
+                    border_pixels.append(gray.getpixel((x, 0)))
+                    border_pixels.append(gray.getpixel((x, h - 1)))
+                for y in range(h):
+                    border_pixels.append(gray.getpixel((0, y)))
+                    border_pixels.append(gray.getpixel((w - 1, y)))
+
+                from collections import Counter
+                bg_val = Counter(border_pixels).most_common(1)[0][0]
+
+                # Crear máscara binaria: píxeles muy diferentes al fondo
+                threshold = 40
+                mask = Image.new("L", (w, h), 0)
+                mask_pixels = mask.load()
+                gray_pixels = gray.load()
+                for y in range(h):
+                    for x in range(w):
+                        if abs(gray_pixels[x, y] - bg_val) > threshold:
+                            mask_pixels[x, y] = 255
+
+                # Encontrar bounding boxes de regiones conectadas (flood-fill simple)
+                visited = set()
+                regions = []
+
+                def _flood_fill(sx, sy):
+                    """BFS simple para encontrar región conectada."""
+                    stack = [(sx, sy)]
+                    x_min, x_max, y_min, y_max = sx, sx, sy, sy
+                    count = 0
+                    while stack:
+                        cx, cy = stack.pop()
+                        if (cx, cy) in visited:
+                            continue
+                        if cx < 0 or cy < 0 or cx >= w or cy >= h:
+                            continue
+                        if mask_pixels[cx, cy] == 0:
+                            continue
+                        visited.add((cx, cy))
+                        count += 1
+                        x_min = min(x_min, cx)
+                        x_max = max(x_max, cx)
+                        y_min = min(y_min, cy)
+                        y_max = max(y_max, cy)
+                        # Solo 4-vecinos, con paso de 2 para velocidad
+                        for dx, dy in [(-2, 0), (2, 0), (0, -2), (0, 2)]:
+                            nx, ny = cx + dx, cy + dy
+                            if 0 <= nx < w and 0 <= ny < h and (nx, ny) not in visited:
+                                stack.append((nx, ny))
+                    return x_min, y_min, x_max, y_max, count
+
+                # Escanear con paso grueso para encontrar regiones
+                step = max(4, min(w, h) // 100)
+                for sy in range(0, h, step):
+                    for sx in range(0, w, step):
+                        if (sx, sy) in visited or mask_pixels[sx, sy] == 0:
+                            continue
+                        x1, y1, x2, y2, cnt = _flood_fill(sx, sy)
+                        rw = x2 - x1
+                        rh = y2 - y1
+                        area = rw * rh
+                        if area < min_area or area > max_area:
+                            continue
+                        if rw < min_dim or rh < min_dim:
+                            continue
+                        # Verificar densidad: la región debe tener suficientes píxeles
+                        density = cnt / max(area / 4, 1)  # ajustado por paso de 2
+                        if density < 0.05:
+                            continue
+                        regions.append((x1, y1, x2, y2))
+
+                if not regions:
+                    return []
+
+                # Fusionar regiones superpuestas
+                regions = self._merge_overlapping_regions(regions)
+
+                sub_images = []
+                for idx, (x1, y1, x2, y2) in enumerate(regions[:5]):  # máximo 5 sub-imágenes
+                    # Expandir un poco el recorte
+                    pad = 4
+                    x1 = max(0, x1 - pad)
+                    y1 = max(0, y1 - pad)
+                    x2 = min(w, x2 + pad)
+                    y2 = min(h, y2 + pad)
+
+                    cropped = img.crop((x1, y1, x2, y2))
+                    sub_name = f"slide_{slide_num:03d}_sub_{idx + 1}.jpg"
+                    sub_path = images_dir / sub_name
+                    cropped.save(str(sub_path), "JPEG", quality=85)
+
+                    # Describir con Gemini si está disponible
+                    description = ""
+                    if self._gemini_model:
+                        description = self._describe_with_gemini(str(sub_path), "")
+
+                    sub_images.append({
+                        "file": f"slide_images/{sub_name}",
+                        "description": description,
+                    })
+
+                return sub_images
+
+        except Exception as e:
+            logger.warning(f"Error extrayendo sub-imágenes del slide {slide_num}: {e}")
+            return []
+
+    @staticmethod
+    def _merge_overlapping_regions(regions: list[tuple]) -> list[tuple]:
+        """Fusiona bounding boxes que se solapan."""
+        if not regions:
+            return []
+        merged = list(regions)
+        changed = True
+        while changed:
+            changed = False
+            new_merged = []
+            used = set()
+            for i in range(len(merged)):
+                if i in used:
+                    continue
+                x1, y1, x2, y2 = merged[i]
+                for j in range(i + 1, len(merged)):
+                    if j in used:
+                        continue
+                    ax1, ay1, ax2, ay2 = merged[j]
+                    # Verificar solapamiento
+                    if x1 <= ax2 and x2 >= ax1 and y1 <= ay2 and y2 >= ay1:
+                        x1 = min(x1, ax1)
+                        y1 = min(y1, ay1)
+                        x2 = max(x2, ax2)
+                        y2 = max(y2, ay2)
+                        used.add(j)
+                        changed = True
+                new_merged.append((x1, y1, x2, y2))
+                used.add(i)
+            merged = new_merged
+        return merged
 
     # ─────────────────────────────────────────────────────────────────────────
     # Gemini Vision para diagramas

@@ -34,6 +34,7 @@ _log_buffer = collections.deque(maxlen=2000)
 # ──────────────────────────────────────────────────────────
 
 _proc_status = {"step": "Esperando...", "percent": 0, "detail": ""}
+_server_start_time = time.time()
 _cancel_flag = threading.Event()  # se activa cuando el usuario cancela el procesamiento
 
 
@@ -238,6 +239,107 @@ def get_slides_content(class_id):
     })
 
 
+@app.route('/api/classes/<path:class_id>/slide_images/<path:filename>')
+def serve_slide_image(class_id, filename):
+    """Sirve las imágenes de slides guardadas en la carpeta de la clase."""
+    images_dir = file_manager.clases_dir / class_id / "slide_images"
+    if not images_dir.exists():
+        return jsonify({"error": "No hay imágenes de slides"}), 404
+    return send_from_directory(str(images_dir), filename)
+
+
+def _build_image_map(class_id: str) -> dict:
+    """
+    Construye un mapa {slide_num: [rutas relativas de imágenes]} a partir de
+    los archivos en slide_images/ de la carpeta de la clase.
+    Incluye imágenes principales (slide_NNN.jpg) y sub-imágenes (slide_NNN_sub_M.jpg).
+    """
+    import re as _r
+    images_dir = file_manager.clases_dir / class_id / "slide_images"
+    if not images_dir.exists():
+        return {}
+    image_map = {}
+    for fp in sorted(images_dir.glob("slide_*.jpg")):
+        m = _r.match(r'slide_(\d+)(?:_sub_\d+)?\.jpg', fp.name)
+        if m:
+            slide_num = int(m.group(1))
+            image_map.setdefault(slide_num, []).append(f"slide_images/{fp.name}")
+    return image_map
+
+
+@app.route('/api/classes/<path:class_id>/slides/regenerate', methods=['POST'])
+def regenerate_slides_document(class_id):
+    """
+    Borra el documento IA de slides, regenera desde slides.md y limpia caché.
+    Usa Server-Sent Events (SSE) para enviar progreso en tiempo real.
+    """
+    raw_slides = file_manager.get_slides(class_id)
+    if not raw_slides:
+        return jsonify({"error": "No hay slides crudos para esta clase"}), 404
+
+    class_info = file_manager.get_class_by_id(class_id)
+    if not class_info:
+        return jsonify({"error": "Clase no encontrada"}), 404
+
+    def _generate_sse():
+        import json as _json
+
+        def _send(event, data):
+            return f"event: {event}\ndata: {_json.dumps(data, ensure_ascii=False)}\n\n"
+
+        yield _send("progress", {"step": "Eliminando versión anterior...", "percent": 10, "eta": ""})
+
+        # Borrar documento previo
+        doc_path = file_manager.clases_dir / class_id / "slides_document.md"
+        if doc_path.exists():
+            doc_path.unlink()
+            logger.info(f"Documento de slides anterior eliminado: {class_id}")
+
+        yield _send("progress", {"step": "Limpiando caché de chat...", "percent": 20, "eta": ""})
+
+        # Borrar caché de chat
+        gemini_service.clear_chat_history(class_id)
+        file_manager.delete_chat_history(class_id)
+        cache_path = file_manager.clases_dir / class_id / "gemini_cache.txt"
+        if cache_path.exists():
+            cache_path.unlink()
+
+        yield _send("progress", {"step": "Filtrando slides de UI/navegación...", "percent": 30, "eta": "~15-30s"})
+
+        folder_name = class_id.split('/')[-1] if '/' in class_id else class_id
+
+        # Construir mapa de imágenes desde la carpeta de clase
+        yield _send("progress", {"step": "Indexando imágenes de slides...", "percent": 35, "eta": "~15-25s"})
+        image_map = _build_image_map(class_id)
+
+        try:
+            yield _send("progress", {"step": "Enviando a Gemini para generación...", "percent": 45, "eta": "~10-25s"})
+
+            t0 = time.time()
+            new_doc = gemini_service.generate_slides_document(raw_slides, folder_name, image_map=image_map)
+            elapsed = time.time() - t0
+
+            if new_doc:
+                yield _send("progress", {"step": "Guardando documento...", "percent": 90, "eta": "<2s"})
+                class_folder = file_manager.clases_dir / class_id
+                file_manager.save_slides_document(new_doc, class_folder)
+                logger.info(f"Documento de slides regenerado en {elapsed:.1f}s: {class_id}")
+
+                yield _send("progress", {"step": "¡Listo!", "percent": 100, "eta": ""})
+                yield _send("done", {"success": True, "document": new_doc, "elapsed": round(elapsed, 1)})
+            else:
+                yield _send("error", {"error": "Gemini no generó contenido"})
+        except Exception as e:
+            logger.error(f"Error regenerando documento de slides: {e}")
+            yield _send("error", {"error": str(e)})
+
+    return Response(
+        _generate_sse(),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.route('/api/classes/<path:class_id>/summary', methods=['GET'])
 def get_summary(class_id):
     """Obtiene el resumen de una clase"""
@@ -383,7 +485,17 @@ def process_video():
 
         _raise_if_cancelled()
 
-        # 4. Extraer contenido de slides (proceso medio, requiere GOOGLE_VISION_API_KEY)
+        # 4. Generar nombre de carpeta (antes de slides para tener persist_dir)
+        _set_status("Generando nombre de carpeta...", 60)
+        context_for_naming = result["text"][:5000]
+        folder_name = gemini_service.generate_folder_name(context_for_naming)
+
+        # 5. Crear carpeta para guardar archivos
+        _set_status("Creando carpeta de clase...", 62)
+        class_folder = file_manager.create_class_folder(folder_name, parent_path=folder_path)
+        file_manager.save_transcription(result["segments"], class_folder)
+
+        # 6. Extraer contenido de slides (persiste imágenes en la carpeta de clase)
         slides_markdown = ""
         slides_storage_md = ""
         if slide_extractor:
@@ -402,6 +514,7 @@ def process_video():
                     video_path=video_path,
                     temp_dir=str(config.TEMP_DIR),
                     progress_callback=_slides_progress,
+                    persist_dir=str(class_folder),
                 )
                 slides_markdown = slide_extractor.format_slides_for_context(slides)
                 slides_storage_md = slide_extractor.format_slides_for_storage(slides)
@@ -413,19 +526,10 @@ def process_video():
             except Exception as e:
                 logger.warning(f"Error extrayendo slides (continuando sin slides): {e}")
 
-        # 5. Generar nombre de carpeta
-        _set_status("Generando nombre de carpeta...", 87)
-        context_for_naming = result["text"] + ("\n" + slides_markdown[:2000] if slides_markdown else "")
-        folder_name = gemini_service.generate_folder_name(context_for_naming)
-
-        # 6. Crear carpeta y guardar archivos
-        _set_status("Guardando transcripción e imágenes...", 91)
-        class_folder = file_manager.create_class_folder(folder_name, parent_path=folder_path)
-        file_manager.save_transcription(result["segments"], class_folder)
         if slides_storage_md:
             file_manager.save_slides(slides_storage_md, class_folder)
 
-        # 7. Generar resumen con transcripción + slides (proceso ligero)
+        # 7. Generar resumen con transcripción + slides (proceso ligero, texto puro para IA)
         _set_status("Generando resumen con Gemini...", 93)
         full_context = result["text"] + slides_markdown
         summary = gemini_service.generate_summary(full_context, folder_name)
@@ -435,8 +539,10 @@ def process_video():
         if slides_storage_md:
             _set_status("Generando documento de presentación...", 97)
             try:
+                class_id_tmp = class_folder.relative_to(file_manager.clases_dir).as_posix()
+                img_map = _build_image_map(class_id_tmp)
                 slides_document = gemini_service.generate_slides_document(
-                    slides_storage_md, folder_name
+                    slides_storage_md, folder_name, image_map=img_map
                 )
                 if slides_document:
                     file_manager.save_slides_document(slides_document, class_folder)
@@ -484,6 +590,36 @@ def process_video():
 def get_process_status():
     """Devuelve el paso actual del procesamiento para la barra de progreso."""
     return jsonify(_proc_status)
+
+
+@app.route('/api/system/status', methods=['GET'])
+def get_system_status():
+    """Estado combinado: procesamiento + GPU + servidor. Optimizado para polling remoto."""
+    result = {
+        "process": dict(_proc_status),
+        "server_uptime_s": round(time.time() - _server_start_time),
+        "gpu": {"gpu_available": False},
+    }
+    try:
+        import torch
+        if torch.cuda.is_available():
+            props = torch.cuda.get_device_properties(0)
+            total = props.total_memory
+            free, _ = torch.cuda.mem_get_info(0)
+            used = total - free
+            result["gpu"] = {
+                "gpu_available": True,
+                "name": torch.cuda.get_device_name(0),
+                "vram_total_gb": round(total / (1024**3), 2),
+                "vram_used_gb": round(used / (1024**3), 2),
+                "vram_free_gb": round(free / (1024**3), 2),
+                "vram_used_pct": round(used / total * 100, 1),
+                "gpu_util_pct": _get_gpu_util_pct(),
+                "gpu_temp_c": _get_gpu_temp(),
+            }
+    except Exception:
+        pass
+    return jsonify(result)
 
 
 @app.route('/api/process/cancel', methods=['POST'])
@@ -606,10 +742,69 @@ def shutdown_machine():
     def do_shutdown():
         time.sleep(3)
         logger.info("Apagando el equipo por solicitud del usuario...")
-        subprocess.run(['shutdown', '-h', 'now'], check=False)
+        os.system("shutdown /s /f /t 0")
 
     threading.Thread(target=do_shutdown, daemon=True).start()
     return jsonify({"ok": True, "message": "El equipo se apagará en breve."})
+
+
+# ============== TÚNEL REMOTO (cloudflared) ==============
+
+_tunnel_process = None
+
+@app.route('/api/tunnel/start', methods=['POST'])
+def start_tunnel():
+    """Inicia un túnel cloudflared para acceso remoto seguro."""
+    global _tunnel_process
+    if _tunnel_process and _tunnel_process.poll() is None:
+        return jsonify({"ok": False, "message": "El túnel ya está activo."})
+    try:
+        _tunnel_process = subprocess.Popen(
+            ['cloudflared', 'tunnel', '--url', f'http://127.0.0.1:{config.FLASK_PORT}'],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding='utf-8', errors='replace'
+        )
+        # Leer la URL generada por cloudflared
+        url = None
+        import re as _re
+        for _ in range(40):
+            line = _tunnel_process.stdout.readline()
+            if not line:
+                break
+            m = _re.search(r'(https://[a-z0-9\-]+\.trycloudflare\.com)', line)
+            if m:
+                url = m.group(1)
+                break
+        if url:
+            logger.info(f"Túnel cloudflared activo: {url}")
+            return jsonify({"ok": True, "url": url})
+        else:
+            return jsonify({"ok": True, "url": None, "message": "Túnel iniciado, URL no detectada aún. Revisa los logs."})
+    except FileNotFoundError:
+        return jsonify({"ok": False, "message": "cloudflared no encontrado. Instálalo desde https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/"})
+    except Exception as e:
+        return jsonify({"ok": False, "message": str(e)})
+
+
+@app.route('/api/tunnel/stop', methods=['POST'])
+def stop_tunnel():
+    """Detiene el túnel cloudflared activo."""
+    global _tunnel_process
+    if _tunnel_process and _tunnel_process.poll() is None:
+        _tunnel_process.terminate()
+        _tunnel_process.wait(timeout=5)
+        _tunnel_process = None
+        logger.info("Túnel cloudflared detenido.")
+        return jsonify({"ok": True, "message": "Túnel detenido."})
+    _tunnel_process = None
+    return jsonify({"ok": False, "message": "No hay túnel activo."})
+
+
+@app.route('/api/tunnel/status', methods=['GET'])
+def tunnel_status():
+    """Devuelve si el túnel está activo."""
+    active = _tunnel_process is not None and _tunnel_process.poll() is None
+    return jsonify({"active": active})
 
 
 # ============== LOGS EN MEMORIA ==============
@@ -714,21 +909,28 @@ def _build_slides_pdf(class_id: str, class_name: str, slides_md: str) -> bytes:
     pdf.multi_cell(EW, 5, f"Total slides con contenido: {n_slides}", align="C")
 
     # ── Parsear secciones del Markdown ───────────────────────────────────────
+    _img_re = _re.compile(r'^!\[.*?\]\((.+?)\)')
     sections = []
     current = None
     for line in slides_md.splitlines():
         if line.startswith("## Slide "):
             if current:
                 sections.append(current)
-            current = {"header": line[3:], "text_lines": [], "visual": ""}
+            current = {"header": line[3:], "text_lines": [], "visual": "", "images": []}
         elif current is not None:
             stripped = line.strip()
-            if stripped.startswith("> "):
+            img_m = _img_re.match(stripped)
+            if img_m:
+                current["images"].append(img_m.group(1))
+            elif stripped.startswith("> "):
                 current["visual"] = stripped[2:].strip()
             elif stripped not in ("---", "**Texto en pantalla:**", "**Elemento visual detectado:**") and stripped:
                 current["text_lines"].append(stripped)
     if current:
         sections.append(current)
+
+    # Resolver directorio de imágenes de la clase
+    _class_images_dir = file_manager.clases_dir / class_id
 
     # ── Páginas de slides ─────────────────────────────────────────────────
     for sec in sections:
@@ -742,6 +944,48 @@ def _build_slides_pdf(class_id: str, class_name: str, slides_md: str) -> bytes:
             pdf.set_x(pdf.l_margin)
             pdf.cell(EW, 8, _s(sec["header"]), fill=True, ln=True, align="L")
             pdf.set_xy(pdf.l_margin, pdf.get_y() + 3)
+
+            # Imagen del slide (si existe) — aspect-ratio contain, max-height
+            for img_ref in sec.get("images", []):
+                img_path = _class_images_dir / img_ref
+                if img_path.exists():
+                    try:
+                        from PIL import Image as _PILImage
+                        with _PILImage.open(str(img_path)) as _pil_img:
+                            iw_px, ih_px = _pil_img.size
+
+                        # Convertir px a mm (asumiendo 96 DPI)
+                        iw_mm = iw_px * 25.4 / 96
+                        ih_mm = ih_px * 25.4 / 96
+
+                        # Espacio disponible en la página
+                        avail_w = EW
+                        avail_h = pdf.h - pdf.get_y() - pdf.b_margin - 8
+                        max_h = min(avail_h, 110)  # máximo 110mm de alto
+
+                        if max_h < 20:
+                            # No hay espacio suficiente, saltar a nueva página
+                            pdf.add_page()
+                            pdf.set_xy(pdf.l_margin, pdf.get_y() + 2)
+                            avail_h = pdf.h - pdf.get_y() - pdf.b_margin - 8
+                            max_h = min(avail_h, 110)
+
+                        # Calcular dimensiones manteniendo aspect ratio (contain)
+                        aspect = iw_mm / ih_mm if ih_mm > 0 else 1
+                        # Ajustar por ancho
+                        render_w = avail_w
+                        render_h = render_w / aspect
+                        # Si excede max_h, ajustar por alto
+                        if render_h > max_h:
+                            render_h = max_h
+                            render_w = render_h * aspect
+                        # Centrar horizontalmente si es más estrecha que el ancho disponible
+                        x_offset = pdf.l_margin + (avail_w - render_w) / 2
+
+                        pdf.image(str(img_path), x=x_offset, w=render_w, h=render_h)
+                        pdf.ln(3)
+                    except Exception as img_err:
+                        logger.warning(f"PDF: no se pudo insertar imagen {img_ref}: {img_err}")
 
             # Texto del slide
             if sec["text_lines"]:
@@ -1122,7 +1366,19 @@ if __name__ == '__main__':
     except ImportError:
         logger.warning("PyTorch no está instalado. La transcripción local no estará disponible.")
 
+    # Detectar IP de red local para mostrar acceso remoto
+    import socket as _socket
+    try:
+        _s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+        _s.connect(("8.8.8.8", 80))
+        _local_ip = _s.getsockname()[0]
+        _s.close()
+    except Exception:
+        _local_ip = "127.0.0.1"
+
     logger.info(f"Servidor iniciando en http://{config.FLASK_HOST}:{config.FLASK_PORT}")
+    logger.info(f"Acceso red local: http://{_local_ip}:{config.FLASK_PORT}")
+    logger.info("GPU local procesa todas las subidas (locales y remotas)")
     logger.info("=" * 50)
 
     app.run(
