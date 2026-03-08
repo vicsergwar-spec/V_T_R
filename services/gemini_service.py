@@ -454,6 +454,8 @@ Responde SOLO con el documento Markdown (incluyendo el frontmatter YAML), sin ex
         slides_content: str = "",
         history: list = None,
         cached_content_name: str = None,
+        knowledge_text: str = "",
+        rubricas_text: str = "",
     ) -> Optional[str]:
         """
         Inicia (o restaura) una sesión de chat para una clase.
@@ -464,6 +466,8 @@ Responde SOLO con el documento Markdown (incluyendo el frontmatter YAML), sin ex
             slides_content:       Contenido extraído de los slides (visual), opcional
             history:              Historial previo a restaurar. Si es None se empieza vacío.
             cached_content_name:  Nombre de caché de Gemini guardado previamente.
+            knowledge_text:       Texto de archivos de conocimiento extra (se guarda en RAM).
+            rubricas_text:        Texto de rúbricas (se guarda en RAM).
 
         Returns:
             El nombre del caché usado/creado (para persistirlo), o None si no se usó caché.
@@ -522,6 +526,8 @@ INSTRUCCIONES:
         self.chat_sessions[class_id] = {
             "chat": session_model.start_chat(history=sdk_history),
             "history": list(history) if history else [],
+            "knowledge_text": knowledge_text or "",
+            "rubricas_text": rubricas_text or "",
         }
         action = "restaurada" if history else "iniciada"
         logger.info(
@@ -548,12 +554,17 @@ INSTRUCCIONES:
         session = self.chat_sessions[class_id]
 
         try:
-            # Enviar solo el nuevo mensaje; el historial y system_instruction
-            # ya viven en el objeto chat del SDK (no se reenvían desde cero)
-            response = session["chat"].send_message(user_message)
+            # Construir mensaje con contexto adicional prepended (sin tocar la caché)
+            enriched_message = self._prepend_extra_context(
+                user_message,
+                session.get("knowledge_text", ""),
+                session.get("rubricas_text", ""),
+            )
+
+            response = session["chat"].send_message(enriched_message)
             assistant_message = response.text.strip()
 
-            # Guardar en historial local (para persistencia en disco)
+            # Guardar en historial local el mensaje ORIGINAL (sin el contexto prepended)
             session["history"].append({"role": "user", "content": user_message})
             session["history"].append({"role": "model", "content": assistant_message})
 
@@ -563,6 +574,19 @@ INSTRUCCIONES:
         except Exception as e:
             logger.error(f"Error en chat: {e}")
             return f"Lo siento, hubo un error al procesar tu pregunta. Por favor, intenta de nuevo."
+
+    @staticmethod
+    def _prepend_extra_context(user_message: str, knowledge_text: str, rubricas_text: str) -> str:
+        """Prepend knowledge and rubrics blocks to the user message if they exist."""
+        parts = []
+        if knowledge_text and knowledge_text.strip():
+            parts.append(f"[CONOCIMIENTO EXTRA]\n{knowledge_text}\n[/CONOCIMIENTO EXTRA]")
+        if rubricas_text and rubricas_text.strip():
+            parts.append(f"[RÚBRICAS]\n{rubricas_text}\n[/RÚBRICAS]")
+        if parts:
+            parts.append(user_message)
+            return "\n\n".join(parts)
+        return user_message
 
     def clear_chat_history(self, class_id: str) -> bool:
         """
@@ -607,6 +631,8 @@ INSTRUCCIONES:
         classes_content: list,
         history: list = None,
         cached_content_name: str = None,
+        knowledge_text: str = "",
+        rubricas_text: str = "",
     ) -> Optional[str]:
         """
         Inicia (o restaura) una sesión de chat para una carpeta completa.
@@ -681,6 +707,8 @@ INSTRUCCIONES:
         self.chat_sessions[folder_id] = {
             "chat": session_model.start_chat(history=sdk_history),
             "history": list(history) if history else [],
+            "knowledge_text": knowledge_text or "",
+            "rubricas_text": rubricas_text or "",
         }
 
         action = "restaurada" if history else "iniciada"

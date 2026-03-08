@@ -393,6 +393,163 @@ class FileManager:
         return True
 
     # ──────────────────────────────────────────────────────────
+    # Conocimiento extra y rúbricas
+    # ──────────────────────────────────────────────────────────
+
+    def save_knowledge_file(self, class_id: str, filename: str, file_storage) -> str:
+        """Guarda un archivo de conocimiento extra en extra_knowledge/"""
+        knowledge_dir = self.clases_dir / class_id / "extra_knowledge"
+        knowledge_dir.mkdir(parents=True, exist_ok=True)
+        safe_name = self._sanitize_knowledge_filename(filename)
+        dest = knowledge_dir / safe_name
+        file_storage.save(str(dest))
+        logger.info(f"Archivo de conocimiento guardado: {dest}")
+        return safe_name
+
+    def get_knowledge_files(self, class_id: str) -> list:
+        """Lista archivos en extra_knowledge/"""
+        knowledge_dir = self.clases_dir / class_id / "extra_knowledge"
+        if not knowledge_dir.exists():
+            return []
+        files = []
+        for f in sorted(knowledge_dir.iterdir()):
+            if f.is_file():
+                files.append({"name": f.name, "size": f.stat().st_size})
+        return files
+
+    def delete_knowledge_file(self, class_id: str, filename: str) -> bool:
+        """Elimina un archivo de conocimiento extra."""
+        fpath = self.clases_dir / class_id / "extra_knowledge" / filename
+        if fpath.exists():
+            fpath.unlink()
+            logger.info(f"Archivo de conocimiento eliminado: {fpath}")
+            return True
+        return False
+
+    def get_knowledge_text(self, class_id: str) -> str:
+        """Lee todos los archivos de texto en extra_knowledge/ y devuelve texto combinado."""
+        knowledge_dir = self.clases_dir / class_id / "extra_knowledge"
+        if not knowledge_dir.exists():
+            return ""
+        parts = []
+        for f in sorted(knowledge_dir.iterdir()):
+            if not f.is_file():
+                continue
+            ext = f.suffix.lower()
+            if ext == '.txt':
+                try:
+                    content = f.read_text(encoding="utf-8")
+                    parts.append(f"--- Archivo: {f.name} ---\n{content}")
+                except Exception as e:
+                    logger.warning(f"Error leyendo {f}: {e}")
+            elif ext == '.pdf':
+                try:
+                    import PyPDF2
+                    with open(f, 'rb') as pdf_file:
+                        reader = PyPDF2.PdfReader(pdf_file)
+                        text = "\n".join(page.extract_text() or "" for page in reader.pages)
+                        parts.append(f"--- Archivo PDF: {f.name} ---\n{text}")
+                except Exception:
+                    parts.append(f"--- Archivo PDF: {f.name} (contenido no extraible) ---")
+            elif ext in ('.docx', '.doc'):
+                try:
+                    import docx
+                    doc = docx.Document(str(f))
+                    text = "\n".join(p.text for p in doc.paragraphs)
+                    parts.append(f"--- Archivo DOCX: {f.name} ---\n{text}")
+                except Exception:
+                    parts.append(f"--- Archivo DOCX: {f.name} (contenido no extraible) ---")
+            elif ext in ('.png', '.jpg', '.jpeg', '.webp'):
+                parts.append(f"--- Imagen: {f.name} (archivo de imagen subido) ---")
+        return "\n\n".join(parts)
+
+    def save_rubrica(self, class_id: str, filename: str, content: str) -> str:
+        """Guarda una rúbrica de texto."""
+        rubrica_dir = self.clases_dir / class_id / "rubricas"
+        rubrica_dir.mkdir(parents=True, exist_ok=True)
+        dest = rubrica_dir / filename
+        dest.write_text(content, encoding="utf-8")
+        logger.info(f"Rúbrica guardada: {dest}")
+        return filename
+
+    def save_rubrica_file(self, class_id: str, filename: str, file_storage) -> str:
+        """Guarda un archivo de rúbrica subido."""
+        rubrica_dir = self.clases_dir / class_id / "rubricas"
+        rubrica_dir.mkdir(parents=True, exist_ok=True)
+        safe_name = self._sanitize_knowledge_filename(filename)
+        dest = rubrica_dir / safe_name
+        file_storage.save(str(dest))
+        logger.info(f"Archivo de rúbrica guardado: {dest}")
+        return safe_name
+
+    def get_rubrica_files(self, class_id: str) -> list:
+        """Lista archivos de rúbricas."""
+        rubrica_dir = self.clases_dir / class_id / "rubricas"
+        if not rubrica_dir.exists():
+            return []
+        files = []
+        for f in sorted(rubrica_dir.iterdir()):
+            if f.is_file():
+                files.append({"name": f.name, "size": f.stat().st_size})
+        return files
+
+    def delete_rubrica_file(self, class_id: str, filename: str) -> bool:
+        """Elimina un archivo de rúbrica."""
+        fpath = self.clases_dir / class_id / "rubricas" / filename
+        if fpath.exists():
+            fpath.unlink()
+            logger.info(f"Archivo de rúbrica eliminado: {fpath}")
+            return True
+        return False
+
+    def get_rubricas_text(self, class_id: str) -> str:
+        """Lee todas las rúbricas y devuelve texto combinado."""
+        rubrica_dir = self.clases_dir / class_id / "rubricas"
+        if not rubrica_dir.exists():
+            return ""
+        parts = []
+        for f in sorted(rubrica_dir.iterdir()):
+            if not f.is_file():
+                continue
+            ext = f.suffix.lower()
+            if ext in ('.txt', '.md'):
+                try:
+                    content = f.read_text(encoding="utf-8")
+                    parts.append(f"--- Rúbrica: {f.name} ---\n{content}")
+                except Exception as e:
+                    logger.warning(f"Error leyendo rúbrica {f}: {e}")
+            elif ext == '.pdf':
+                try:
+                    import PyPDF2
+                    with open(f, 'rb') as pdf_file:
+                        reader = PyPDF2.PdfReader(pdf_file)
+                        text = "\n".join(page.extract_text() or "" for page in reader.pages)
+                        parts.append(f"--- Rúbrica PDF: {f.name} ---\n{text}")
+                except Exception:
+                    parts.append(f"--- Rúbrica PDF: {f.name} (contenido no extraible) ---")
+            elif ext in ('.docx', '.doc'):
+                try:
+                    import docx
+                    doc = docx.Document(str(f))
+                    text = "\n".join(p.text for p in doc.paragraphs)
+                    parts.append(f"--- Rúbrica DOCX: {f.name} ---\n{text}")
+                except Exception:
+                    parts.append(f"--- Rúbrica DOCX: {f.name} (contenido no extraible) ---")
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _sanitize_knowledge_filename(filename: str) -> str:
+        """Sanitiza un nombre de archivo para conocimiento/rúbrica."""
+        path = Path(filename)
+        name = path.stem
+        ext = path.suffix
+        name = "".join(c for c in name if c.isalnum() or c in "._- ")
+        name = name.replace(" ", "_")
+        if not name:
+            name = "archivo"
+        return f"{name}{ext}"
+
+    # ──────────────────────────────────────────────────────────
     # Helpers internos
     # ──────────────────────────────────────────────────────────
 

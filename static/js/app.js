@@ -90,6 +90,21 @@ const elements = {
     sendChatBtn: document.getElementById('sendChatBtn'),
     clearChatBtn: document.getElementById('clearChatBtn'),
 
+    // Regenerar resumen
+    regenerateSummaryBtn: document.getElementById('regenerateSummaryBtn'),
+
+    // Knowledge & Rubrica panels (class chat)
+    knowledgeToggle: document.getElementById('knowledgeToggle'),
+    knowledgePanel: document.getElementById('knowledgePanel'),
+    knowledgeFiles: document.getElementById('knowledgeFiles'),
+    knowledgeFileInput: document.getElementById('knowledgeFileInput'),
+    rubricaToggle: document.getElementById('rubricaToggle'),
+    rubricaPanel: document.getElementById('rubricaPanel'),
+    rubricaFiles: document.getElementById('rubricaFiles'),
+    rubricaText: document.getElementById('rubricaText'),
+    rubricaFileInput: document.getElementById('rubricaFileInput'),
+    saveRubricaBtn: document.getElementById('saveRubricaBtn'),
+
     // Chat de carpeta
     folderChatSection: document.getElementById('folder-chat-section'),
     folderChatBackBtn: document.getElementById('folderChatBackBtn'),
@@ -100,6 +115,18 @@ const elements = {
     folderChatInput: document.getElementById('folderChatInput'),
     sendFolderChatBtn: document.getElementById('sendFolderChatBtn'),
     clearFolderChatBtn: document.getElementById('clearFolderChatBtn'),
+
+    // Knowledge & Rubrica panels (folder chat)
+    folderKnowledgeToggle: document.getElementById('folderKnowledgeToggle'),
+    folderKnowledgePanel: document.getElementById('folderKnowledgePanel'),
+    folderKnowledgeFiles: document.getElementById('folderKnowledgeFiles'),
+    folderKnowledgeFileInput: document.getElementById('folderKnowledgeFileInput'),
+    folderRubricaToggle: document.getElementById('folderRubricaToggle'),
+    folderRubricaPanel: document.getElementById('folderRubricaPanel'),
+    folderRubricaFiles: document.getElementById('folderRubricaFiles'),
+    folderRubricaText: document.getElementById('folderRubricaText'),
+    folderRubricaFileInput: document.getElementById('folderRubricaFileInput'),
+    folderSaveRubricaBtn: document.getElementById('folderSaveRubricaBtn'),
 
     // Modal confirmar
     confirmModal: document.getElementById('confirmModal'),
@@ -148,10 +175,15 @@ document.addEventListener('DOMContentLoaded', () => {
     initRenameModal();
     initLogs();
     initCancelStop();
+    initPanels();
     checkSystemStatus();
     loadClasses();
     startVramPolling();
     detectRemoteConnection();
+
+    // Performance: set will-change on chat containers
+    if (elements.chatMessages) elements.chatMessages.style.willChange = 'transform';
+    if (elements.folderChatMessages) elements.folderChatMessages.style.willChange = 'transform';
 });
 
 // ============================================
@@ -1014,6 +1046,9 @@ function initDetail() {
 
     // Botón regenerar slides
     elements.regenerateSlidesBtn.addEventListener('click', regenerateSlidesDocument);
+
+    // Botón regenerar resumen
+    elements.regenerateSummaryBtn.addEventListener('click', regenerateSummary);
 }
 
 function switchTab(tabName) {
@@ -1264,6 +1299,88 @@ async function regenerateSlidesDocument() {
     }
 }
 
+async function regenerateSummary() {
+    if (!state.currentClass) return;
+    const btn = elements.regenerateSummaryBtn;
+    const origHTML = btn.innerHTML;
+    btn.disabled = true;
+
+    // Crear barra de progreso inline
+    const progressEl = document.createElement('div');
+    progressEl.className = 'regen-progress';
+    progressEl.innerHTML = `
+        <div class="regen-progress-bar"><div class="regen-progress-fill" id="regenSummaryFill"></div></div>
+        <div class="regen-progress-info">
+            <span class="regen-step" id="regenSummaryStep">Iniciando...</span>
+            <span class="regen-eta" id="regenSummaryEta"></span>
+        </div>`;
+    elements.summaryContent.parentNode.insertBefore(progressEl, elements.summaryContent);
+
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin">
+        <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+    </svg> Regenerando...`;
+
+    try {
+        const classId = state.currentClass.id;
+        const url = `/api/classes/${encodeURIComponent(classId).replace(/%2F/g, '/')}/summary/regenerate`;
+        const res = await fetch(url, { method: 'POST' });
+
+        if (!res.ok) {
+            const errData = await res.json();
+            showToast('error', 'Error', errData.error || 'No se pudo regenerar');
+            return;
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let done = false;
+
+        while (!done) {
+            const { value, done: streamDone } = await reader.read();
+            done = streamDone;
+            if (value) buffer += decoder.decode(value, { stream: true });
+
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            let eventType = '';
+            for (const line of lines) {
+                if (line.startsWith('event: ')) {
+                    eventType = line.slice(7).trim();
+                } else if (line.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(line.slice(6));
+                        const fill = document.getElementById('regenSummaryFill');
+                        const step = document.getElementById('regenSummaryStep');
+                        const eta = document.getElementById('regenSummaryEta');
+
+                        if (eventType === 'progress') {
+                            if (fill) fill.style.width = `${data.percent}%`;
+                            if (step) step.textContent = data.step;
+                            if (eta) eta.textContent = data.eta ? `ETA: ${data.eta}` : '';
+                        } else if (eventType === 'done') {
+                            if (fill) fill.style.width = '100%';
+                            if (step) step.textContent = `Completado en ${data.elapsed}s`;
+                            showToast('success', 'Regenerado', `Resumen actualizado en ${data.elapsed}s`);
+                            elements.summaryContent.innerHTML = parseMarkdown(data.summary);
+                        } else if (eventType === 'error') {
+                            showToast('error', 'Error', data.error || 'Error desconocido');
+                        }
+                    } catch (_) { /* ignorar */ }
+                    eventType = '';
+                }
+            }
+        }
+    } catch (err) {
+        showToast('error', 'Error', 'No se pudo conectar al servidor');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = origHTML;
+        setTimeout(() => { if (progressEl.parentNode) progressEl.parentNode.removeChild(progressEl); }, 1500);
+    }
+}
+
 async function loadSlides(classId) {
     try {
         const res  = await fetch(`/api/classes/${classId}/slides`);
@@ -1466,12 +1583,25 @@ async function loadClassChat(classId) {
         const history = data.history || [];
 
         if (history.length > 0) {
-            // Mostrar mensajes previos en la UI
+            // Usar DocumentFragment para batch DOM insertions
             elements.chatMessages.innerHTML = '';
-            history.forEach(msg => addChatMessage(msg.role === 'model' ? 'assistant' : msg.role, msg.content));
+            const fragment = document.createDocumentFragment();
+            history.forEach(msg => {
+                const role = msg.role === 'model' ? 'assistant' : msg.role;
+                const el = _buildChatMessageElement(role, msg.content);
+                fragment.appendChild(el);
+            });
+            elements.chatMessages.appendChild(fragment);
+            requestAnimationFrame(() => {
+                elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+            });
         } else {
             resetChat();
         }
+
+        // Cargar archivos de conocimiento y rúbricas
+        await loadKnowledgeFiles(classId);
+        await loadRubricaFiles(classId);
     } catch (error) {
         console.error('Error loading chat session:', error);
         resetChat();
@@ -1528,18 +1658,39 @@ async function sendChatMessage() {
     }
 }
 
-function addChatMessage(role, content) {
+function _buildChatMessageElement(role, content) {
     const messageDiv = document.createElement('div');
     messageDiv.className = `chat-message ${role}`;
 
     if (role === 'assistant') {
         messageDiv.innerHTML = parseMarkdown(content);
+        // Wrap in container with copy button
+        const wrapper = document.createElement('div');
+        wrapper.className = 'chat-msg-wrapper';
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'btn-copy-chat';
+        copyBtn.textContent = 'Copiar';
+        copyBtn.addEventListener('click', () => {
+            navigator.clipboard.writeText(content).then(() => {
+                copyBtn.textContent = 'Copiado';
+                setTimeout(() => { copyBtn.textContent = 'Copiar'; }, 2000);
+            });
+        });
+        wrapper.appendChild(copyBtn);
+        wrapper.appendChild(messageDiv);
+        return wrapper;
     } else {
         messageDiv.textContent = content;
+        return messageDiv;
     }
+}
 
-    elements.chatMessages.appendChild(messageDiv);
-    elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+function addChatMessage(role, content) {
+    const el = _buildChatMessageElement(role, content);
+    elements.chatMessages.appendChild(el);
+    requestAnimationFrame(() => {
+        elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+    });
 }
 
 function addTypingIndicator() {
@@ -1642,6 +1793,10 @@ async function showFolderChat(folderPath, folderName, classCount) {
     // Resetear y cargar el chat
     resetFolderChat();
     await loadFolderChatSession(folderPath);
+
+    // Load knowledge and rubrica files for folder
+    await loadKnowledgeFiles(folderPath, elements.folderKnowledgeFiles);
+    await loadRubricaFiles(folderPath, elements.folderRubricaFiles);
 }
 
 async function loadFolderChatSession(folderPath) {
@@ -1670,16 +1825,42 @@ async function loadFolderChatSession(folderPath) {
 
         if (history.length > 0) {
             elements.folderChatMessages.innerHTML = '';
-            history.forEach(msg => addFolderChatMessage(
-                msg.role === 'model' ? 'assistant' : msg.role,
-                msg.content
-            ));
+            const fragment = document.createDocumentFragment();
+            history.forEach(msg => {
+                const role = msg.role === 'model' ? 'assistant' : msg.role;
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `chat-message ${role}`;
+                if (role === 'assistant') {
+                    messageDiv.innerHTML = parseMarkdown(msg.content);
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'chat-msg-wrapper';
+                    const copyBtn = document.createElement('button');
+                    copyBtn.className = 'btn-copy-chat';
+                    copyBtn.textContent = 'Copiar';
+                    copyBtn.addEventListener('click', () => {
+                        navigator.clipboard.writeText(msg.content).then(() => {
+                            copyBtn.textContent = 'Copiado';
+                            setTimeout(() => { copyBtn.textContent = 'Copiar'; }, 2000);
+                        });
+                    });
+                    wrapper.appendChild(copyBtn);
+                    wrapper.appendChild(messageDiv);
+                    fragment.appendChild(wrapper);
+                } else {
+                    messageDiv.textContent = msg.content;
+                    fragment.appendChild(messageDiv);
+                }
+            });
+            elements.folderChatMessages.appendChild(fragment);
+            requestAnimationFrame(() => {
+                elements.folderChatMessages.scrollTop = elements.folderChatMessages.scrollHeight;
+            });
         }
 
     } catch (error) {
         console.error('Error cargando chat de carpeta:', error);
         if (loadingBadge) {
-            loadingBadge.textContent = '⚠ Error al cargar';
+            loadingBadge.textContent = 'Error al cargar';
             loadingBadge.style.color = 'var(--error)';
         }
         showToast('error', 'Error', error.message || 'No se pudo cargar el chat de carpeta');
@@ -1728,15 +1909,32 @@ async function sendFolderChatMessage() {
 }
 
 function addFolderChatMessage(role, content) {
-    const div = document.createElement('div');
-    div.className = `chat-message ${role}`;
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `chat-message ${role}`;
+
     if (role === 'assistant') {
-        div.innerHTML = parseMarkdown(content);
+        messageDiv.innerHTML = parseMarkdown(content);
+        const wrapper = document.createElement('div');
+        wrapper.className = 'chat-msg-wrapper';
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'btn-copy-chat';
+        copyBtn.textContent = 'Copiar';
+        copyBtn.addEventListener('click', () => {
+            navigator.clipboard.writeText(content).then(() => {
+                copyBtn.textContent = 'Copiado';
+                setTimeout(() => { copyBtn.textContent = 'Copiar'; }, 2000);
+            });
+        });
+        wrapper.appendChild(copyBtn);
+        wrapper.appendChild(messageDiv);
+        elements.folderChatMessages.appendChild(wrapper);
     } else {
-        div.textContent = content;
+        messageDiv.textContent = content;
+        elements.folderChatMessages.appendChild(messageDiv);
     }
-    elements.folderChatMessages.appendChild(div);
-    elements.folderChatMessages.scrollTop = elements.folderChatMessages.scrollHeight;
+    requestAnimationFrame(() => {
+        elements.folderChatMessages.scrollTop = elements.folderChatMessages.scrollHeight;
+    });
 }
 
 function addFolderTypingIndicator() {
@@ -1916,6 +2114,191 @@ async function renameClass() {
         console.error('Error renaming class:', error);
         showToast('error', 'Error', 'No se pudo renombrar la clase');
     }
+}
+
+// ============================================
+// Knowledge & Rubrica Panels
+// ============================================
+
+function initPanels() {
+    // Class chat panels
+    _initToggle(elements.knowledgeToggle, elements.knowledgePanel);
+    _initToggle(elements.rubricaToggle, elements.rubricaPanel);
+
+    // Folder chat panels
+    _initToggle(elements.folderKnowledgeToggle, elements.folderKnowledgePanel);
+    _initToggle(elements.folderRubricaToggle, elements.folderRubricaPanel);
+
+    // Class chat: knowledge file upload
+    if (elements.knowledgeFileInput) {
+        elements.knowledgeFileInput.addEventListener('change', async (e) => {
+            if (!state.currentClass || !e.target.files.length) return;
+            await uploadKnowledgeFile(state.currentClass.id, e.target.files[0], elements.knowledgeFiles);
+            e.target.value = '';
+        });
+    }
+
+    // Class chat: rubrica file upload
+    if (elements.rubricaFileInput) {
+        elements.rubricaFileInput.addEventListener('change', async (e) => {
+            if (!state.currentClass || !e.target.files.length) return;
+            await uploadRubricaFile(state.currentClass.id, e.target.files[0], elements.rubricaFiles);
+            e.target.value = '';
+        });
+    }
+
+    // Class chat: save rubrica text
+    if (elements.saveRubricaBtn) {
+        elements.saveRubricaBtn.addEventListener('click', async () => {
+            if (!state.currentClass) return;
+            const text = elements.rubricaText.value.trim();
+            if (!text) { showToast('warning', 'Vacio', 'Escribe algo en la rubrica'); return; }
+            await saveRubricaText(state.currentClass.id, text, elements.rubricaFiles);
+            elements.rubricaText.value = '';
+        });
+    }
+
+    // Folder chat: knowledge file upload
+    if (elements.folderKnowledgeFileInput) {
+        elements.folderKnowledgeFileInput.addEventListener('change', async (e) => {
+            if (!state.currentFolder || !e.target.files.length) return;
+            await uploadKnowledgeFile(state.currentFolder.path, e.target.files[0], elements.folderKnowledgeFiles);
+            e.target.value = '';
+        });
+    }
+
+    // Folder chat: rubrica file upload
+    if (elements.folderRubricaFileInput) {
+        elements.folderRubricaFileInput.addEventListener('change', async (e) => {
+            if (!state.currentFolder || !e.target.files.length) return;
+            await uploadRubricaFile(state.currentFolder.path, e.target.files[0], elements.folderRubricaFiles);
+            e.target.value = '';
+        });
+    }
+
+    // Folder chat: save rubrica text
+    if (elements.folderSaveRubricaBtn) {
+        elements.folderSaveRubricaBtn.addEventListener('click', async () => {
+            if (!state.currentFolder) return;
+            const text = elements.folderRubricaText.value.trim();
+            if (!text) { showToast('warning', 'Vacio', 'Escribe algo en la rubrica'); return; }
+            await saveRubricaText(state.currentFolder.path, text, elements.folderRubricaFiles);
+            elements.folderRubricaText.value = '';
+        });
+    }
+}
+
+function _initToggle(toggleBtn, panelEl) {
+    if (!toggleBtn || !panelEl) return;
+    toggleBtn.addEventListener('click', () => {
+        panelEl.classList.toggle('hidden');
+        toggleBtn.classList.toggle('open');
+    });
+}
+
+async function uploadKnowledgeFile(classId, file, containerEl) {
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+        const res = await fetch(`/api/chat/${classId}/knowledge`, { method: 'POST', body: formData });
+        const data = await res.json();
+        if (data.success) {
+            showToast('success', 'Archivo subido', data.filename);
+            await loadKnowledgeFiles(classId, containerEl);
+        } else {
+            showToast('error', 'Error', data.error || 'No se pudo subir');
+        }
+    } catch (err) {
+        showToast('error', 'Error', 'Error de conexion');
+    }
+}
+
+async function uploadRubricaFile(classId, file, containerEl) {
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+        const res = await fetch(`/api/chat/${classId}/rubrica`, { method: 'POST', body: formData });
+        const data = await res.json();
+        if (data.success) {
+            showToast('success', 'Rubrica subida', data.filename);
+            await loadRubricaFiles(classId, containerEl);
+        } else {
+            showToast('error', 'Error', data.error || 'No se pudo subir');
+        }
+    } catch (err) {
+        showToast('error', 'Error', 'Error de conexion');
+    }
+}
+
+async function saveRubricaText(classId, text, containerEl) {
+    try {
+        const res = await fetch(`/api/chat/${classId}/rubrica`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text })
+        });
+        const data = await res.json();
+        if (data.success) {
+            showToast('success', 'Rubrica guardada', data.filename);
+            await loadRubricaFiles(classId, containerEl);
+        } else {
+            showToast('error', 'Error', data.error || 'No se pudo guardar');
+        }
+    } catch (err) {
+        showToast('error', 'Error', 'Error de conexion');
+    }
+}
+
+async function loadKnowledgeFiles(classId, containerEl) {
+    const container = containerEl || elements.knowledgeFiles;
+    if (!container) return;
+    try {
+        const res = await fetch(`/api/chat/${classId}/knowledge`);
+        const data = await res.json();
+        renderFileList(data.files || [], container, classId, 'knowledge');
+    } catch (_) {}
+}
+
+async function loadRubricaFiles(classId, containerEl) {
+    const container = containerEl || elements.rubricaFiles;
+    if (!container) return;
+    try {
+        const res = await fetch(`/api/chat/${classId}/rubricas`);
+        const data = await res.json();
+        renderFileList(data.files || [], container, classId, 'rubrica');
+    } catch (_) {}
+}
+
+function renderFileList(files, container, classId, type) {
+    if (files.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+    container.innerHTML = files.map(f => `
+        <div class="${type === 'knowledge' ? 'knowledge-file-item' : 'rubrica-file-item'}">
+            <span class="file-name">${escapeHtml(f.name)}</span>
+            <button class="btn-delete-file" data-name="${escapeHtml(f.name)}" title="Eliminar">x</button>
+        </div>`).join('');
+
+    container.querySelectorAll('.btn-delete-file').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const filename = btn.dataset.name;
+            const endpoint = type === 'knowledge'
+                ? `/api/chat/${classId}/knowledge/${encodeURIComponent(filename)}`
+                : `/api/chat/${classId}/rubrica/${encodeURIComponent(filename)}`;
+            try {
+                const res = await fetch(endpoint, { method: 'DELETE' });
+                const data = await res.json();
+                if (data.success) {
+                    if (type === 'knowledge') await loadKnowledgeFiles(classId, container);
+                    else await loadRubricaFiles(classId, container);
+                    showToast('success', 'Eliminado', filename);
+                }
+            } catch (_) {
+                showToast('error', 'Error', 'No se pudo eliminar');
+            }
+        });
+    });
 }
 
 // ============================================

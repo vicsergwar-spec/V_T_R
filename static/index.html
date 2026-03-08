@@ -246,6 +246,42 @@
 
                 <div class="folder-chat-classes-badge" id="folderChatClassesBadge"></div>
 
+                <div class="chat-panels">
+                    <div class="chat-panel-section">
+                        <button class="chat-panel-toggle" id="folderKnowledgeToggle">
+                            <span>Extra knowledge</span>
+                            <svg class="panel-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        </button>
+                        <div class="chat-panel-body hidden" id="folderKnowledgePanel">
+                            <p class="panel-hint">Sube archivos (PDF, TXT, DOCX, imagenes) como contexto adicional para el chat de carpeta.</p>
+                            <div class="knowledge-files" id="folderKnowledgeFiles"></div>
+                            <label class="btn-upload-knowledge">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                Subir archivo
+                                <input type="file" id="folderKnowledgeFileInput" accept=".pdf,.txt,.docx,.doc,.png,.jpg,.jpeg,.webp" hidden>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="chat-panel-section">
+                        <button class="chat-panel-toggle" id="folderRubricaToggle">
+                            <span>Rubricas</span>
+                            <svg class="panel-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        </button>
+                        <div class="chat-panel-body hidden" id="folderRubricaPanel">
+                            <p class="panel-hint">Pega o sube rubricas de tareas para que la IA las use como referencia.</p>
+                            <div class="rubrica-files" id="folderRubricaFiles"></div>
+                            <textarea id="folderRubricaText" class="rubrica-textarea" placeholder="Pega aqui la rubrica de la tarea..." rows="4"></textarea>
+                            <div class="rubrica-actions">
+                                <button class="btn-save-rubrica" id="folderSaveRubricaBtn">Guardar rubrica</button>
+                                <label class="btn-upload-knowledge">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                    Subir archivo
+                                    <input type="file" id="folderRubricaFileInput" accept=".pdf,.txt,.docx,.doc" hidden>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
                 <div class="chat-container folder-chat-main">
                     <div class="chat-messages" id="folderChatMessages">
                         <div class="chat-welcome" id="folderChatWelcome">
@@ -303,6 +339,15 @@
 
                     <!-- Tab: Resumen -->
                     <div class="tab-content active" id="tab-summary">
+                        <div class="summary-tab-header">
+                            <button class="btn-regenerate-slides" id="regenerateSummaryBtn" title="Regenerar resumen con IA">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="23 4 23 10 17 10"/>
+                                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                                </svg>
+                                Regenerar Resumen
+                            </button>
+                        </div>
                         <div class="summary-content markdown-body" id="summaryContent">
                             <!-- Resumen en markdown renderizado -->
                         </div>
@@ -363,6 +408,42 @@
 
                     <!-- Tab: Chat -->
                     <div class="tab-content" id="tab-chat">
+                        <div class="chat-panels">
+                            <div class="chat-panel-section">
+                                <button class="chat-panel-toggle" id="knowledgeToggle">
+                                    <span>Extra knowledge</span>
+                                    <svg class="panel-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                                </button>
+                                <div class="chat-panel-body hidden" id="knowledgePanel">
+                                    <p class="panel-hint">Sube archivos (PDF, TXT, DOCX, imagenes) como contexto adicional para el chat.</p>
+                                    <div class="knowledge-files" id="knowledgeFiles"></div>
+                                    <label class="btn-upload-knowledge">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                        Subir archivo
+                                        <input type="file" id="knowledgeFileInput" accept=".pdf,.txt,.docx,.doc,.png,.jpg,.jpeg,.webp" hidden>
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="chat-panel-section">
+                                <button class="chat-panel-toggle" id="rubricaToggle">
+                                    <span>Rubricas</span>
+                                    <svg class="panel-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                                </button>
+                                <div class="chat-panel-body hidden" id="rubricaPanel">
+                                    <p class="panel-hint">Pega o sube rubricas de tareas para que la IA las use como referencia.</p>
+                                    <div class="rubrica-files" id="rubricaFiles"></div>
+                                    <textarea id="rubricaText" class="rubrica-textarea" placeholder="Pega aqui la rubrica de la tarea..." rows="4"></textarea>
+                                    <div class="rubrica-actions">
+                                        <button class="btn-save-rubrica" id="saveRubricaBtn">Guardar rubrica</button>
+                                        <label class="btn-upload-knowledge">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                            Subir archivo
+                                            <input type="file" id="rubricaFileInput" accept=".pdf,.txt,.docx,.doc" hidden>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                         <div class="chat-container">
                             <div class="chat-messages" id="chatMessages">
                                 <div class="chat-welcome">

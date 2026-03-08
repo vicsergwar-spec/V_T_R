@@ -354,6 +354,76 @@ def get_summary(class_id):
     })
 
 
+@app.route('/api/classes/<path:class_id>/summary/regenerate', methods=['POST'])
+def regenerate_summary(class_id):
+    """
+    Regenera el resumen de una clase usando Gemini.
+    Usa Server-Sent Events (SSE) para enviar progreso en tiempo real.
+    """
+    if not gemini_service:
+        return jsonify({"error": "Gemini API no está configurado"}), 500
+
+    transcription_text = file_manager.get_transcription_text(class_id)
+    if not transcription_text:
+        return jsonify({"error": "No se encontró la transcripción"}), 404
+
+    class_info = file_manager.get_class_by_id(class_id)
+    if not class_info:
+        return jsonify({"error": "Clase no encontrada"}), 404
+
+    def _generate_sse():
+        import json as _json
+
+        def _send(event, data):
+            return f"event: {event}\ndata: {_json.dumps(data, ensure_ascii=False)}\n\n"
+
+        yield _send("progress", {"step": "Eliminando resumen anterior...", "percent": 10, "eta": ""})
+
+        # Borrar resumen previo
+        summary_path = file_manager.clases_dir / class_id / "resumen.md"
+        if summary_path.exists():
+            summary_path.unlink()
+            logger.info(f"Resumen anterior eliminado: {class_id}")
+
+        yield _send("progress", {"step": "Limpiando caché de chat...", "percent": 20, "eta": ""})
+
+        # Borrar caché de chat
+        gemini_service.clear_chat_history(class_id)
+        file_manager.delete_chat_history(class_id)
+        cache_path = file_manager.clases_dir / class_id / "gemini_cache.txt"
+        if cache_path.exists():
+            cache_path.unlink()
+
+        yield _send("progress", {"step": "Generando nuevo resumen con IA...", "percent": 40, "eta": "~10-30s"})
+
+        folder_name = class_id.split('/')[-1] if '/' in class_id else class_id
+
+        try:
+            t0 = time.time()
+            new_summary = gemini_service.generate_summary(transcription_text, folder_name)
+            elapsed = time.time() - t0
+
+            if new_summary:
+                yield _send("progress", {"step": "Guardando resumen...", "percent": 90, "eta": "<2s"})
+                class_folder = file_manager.clases_dir / class_id
+                file_manager.save_summary(new_summary, class_folder)
+                logger.info(f"Resumen regenerado en {elapsed:.1f}s: {class_id}")
+
+                yield _send("progress", {"step": "¡Listo!", "percent": 100, "eta": ""})
+                yield _send("done", {"success": True, "summary": new_summary, "elapsed": round(elapsed, 1)})
+            else:
+                yield _send("error", {"error": "Gemini no generó contenido"})
+        except Exception as e:
+            logger.error(f"Error regenerando resumen: {e}")
+            yield _send("error", {"error": str(e)})
+
+    return Response(
+        _generate_sse(),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.route('/api/classes/<path:class_id>', methods=['PATCH'])
 def rename_class(class_id):
     """Renombra una clase guardando el nuevo nombre en nombre.txt"""
@@ -1093,11 +1163,17 @@ def start_chat(class_id):
     saved_history = file_manager.get_chat_history(class_id) or []
     saved_cache_name = file_manager.get_cache_name(class_id)
 
+    # Leer conocimiento extra y rúbricas para RAM (NO se incluyen en la caché)
+    knowledge_text = file_manager.get_knowledge_text(class_id) or ""
+    rubricas_text = file_manager.get_rubricas_text(class_id) or ""
+
     new_cache_name = gemini_service.start_chat_session(
         class_id, transcription_text,
         slides_content=slides_content,
         history=saved_history,
         cached_content_name=saved_cache_name,
+        knowledge_text=knowledge_text,
+        rubricas_text=rubricas_text,
     )
 
     # Guardar el nuevo nombre de caché si cambió (caché creado o renovado)
@@ -1139,11 +1215,17 @@ def send_chat_message(class_id):
                 or file_manager.get_slides(class_id) or ""
             saved_history = file_manager.get_chat_history(class_id) or []
             saved_cache_name = file_manager.get_cache_name(class_id)
+
+            knowledge_text = file_manager.get_knowledge_text(class_id) or ""
+            rubricas_text = file_manager.get_rubricas_text(class_id) or ""
+
             new_cache_name = gemini_service.start_chat_session(
                 class_id, transcription_text,
                 slides_content=slides_content,
                 history=saved_history,
                 cached_content_name=saved_cache_name,
+                knowledge_text=knowledge_text,
+                rubricas_text=rubricas_text,
             )
             if new_cache_name and new_cache_name != saved_cache_name:
                 file_manager.save_cache_name(class_id, new_cache_name)
@@ -1320,6 +1402,101 @@ def clear_folder_chat(folder_path):
     file_manager.delete_folder_chat_history(folder_path)
 
     return jsonify({"success": True, "message": "Historial de chat de carpeta limpiado"})
+
+
+# ============== RUTAS DE CONOCIMIENTO EXTRA Y RÚBRICAS ==============
+
+@app.route('/api/chat/<path:class_id>/knowledge', methods=['POST'])
+def upload_knowledge(class_id):
+    """Sube un archivo de conocimiento extra para el chat de una clase."""
+    if 'file' not in request.files:
+        return jsonify({"error": "No se envió ningún archivo"}), 400
+
+    f = request.files['file']
+    if not f.filename:
+        return jsonify({"error": "Nombre de archivo vacío"}), 400
+
+    try:
+        saved_name = file_manager.save_knowledge_file(class_id, f.filename, f)
+
+        # Actualizar texto de conocimiento en RAM (sin invalidar caché ni historial)
+        if class_id in gemini_service.chat_sessions:
+            gemini_service.chat_sessions[class_id]["knowledge_text"] = \
+                file_manager.get_knowledge_text(class_id) or ""
+
+        return jsonify({"success": True, "filename": saved_name})
+    except Exception as e:
+        logger.error(f"Error subiendo archivo de conocimiento: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/chat/<path:class_id>/knowledge', methods=['GET'])
+def list_knowledge(class_id):
+    """Lista archivos de conocimiento extra de una clase."""
+    files = file_manager.get_knowledge_files(class_id)
+    return jsonify({"files": files})
+
+
+@app.route('/api/chat/<path:class_id>/knowledge/<filename>', methods=['DELETE'])
+def delete_knowledge(class_id, filename):
+    """Elimina un archivo de conocimiento extra."""
+    success = file_manager.delete_knowledge_file(class_id, filename)
+    if success:
+        # Actualizar texto de conocimiento en RAM
+        if class_id in gemini_service.chat_sessions:
+            gemini_service.chat_sessions[class_id]["knowledge_text"] = \
+                file_manager.get_knowledge_text(class_id) or ""
+        return jsonify({"success": True})
+    return jsonify({"error": "Archivo no encontrado"}), 404
+
+
+@app.route('/api/chat/<path:class_id>/rubrica', methods=['POST'])
+def upload_rubrica(class_id):
+    """Sube o guarda una rúbrica para el chat de una clase."""
+    try:
+        if 'file' in request.files and request.files['file'].filename:
+            f = request.files['file']
+            saved_name = file_manager.save_rubrica_file(class_id, f.filename, f)
+        elif request.is_json:
+            data = request.get_json()
+            text = data.get('text', '').strip()
+            if not text:
+                return jsonify({"error": "Texto de rúbrica vacío"}), 400
+            from datetime import datetime
+            filename = f"rubrica_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            saved_name = file_manager.save_rubrica(class_id, filename, text)
+        else:
+            return jsonify({"error": "No se envió archivo ni texto"}), 400
+
+        # Actualizar texto de rúbricas en RAM (sin invalidar caché ni historial)
+        if class_id in gemini_service.chat_sessions:
+            gemini_service.chat_sessions[class_id]["rubricas_text"] = \
+                file_manager.get_rubricas_text(class_id) or ""
+
+        return jsonify({"success": True, "filename": saved_name})
+    except Exception as e:
+        logger.error(f"Error guardando rúbrica: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/chat/<path:class_id>/rubricas', methods=['GET'])
+def list_rubricas(class_id):
+    """Lista archivos de rúbricas de una clase."""
+    files = file_manager.get_rubrica_files(class_id)
+    return jsonify({"files": files})
+
+
+@app.route('/api/chat/<path:class_id>/rubrica/<filename>', methods=['DELETE'])
+def delete_rubrica(class_id, filename):
+    """Elimina un archivo de rúbrica."""
+    success = file_manager.delete_rubrica_file(class_id, filename)
+    if success:
+        # Actualizar texto de rúbricas en RAM
+        if class_id in gemini_service.chat_sessions:
+            gemini_service.chat_sessions[class_id]["rubricas_text"] = \
+                file_manager.get_rubricas_text(class_id) or ""
+        return jsonify({"success": True})
+    return jsonify({"error": "Archivo no encontrado"}), 404
 
 
 # ============== MANEJO DE ERRORES ==============

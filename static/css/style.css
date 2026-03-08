@@ -1853,6 +1853,8 @@ body {
     display: flex;
     flex-direction: column;
     gap: 16px;
+    will-change: transform;
+    contain: content;
 }
 
 .chat-welcome {
@@ -2438,4 +2440,228 @@ body {
     padding: 48px 0;
     font-family: inherit;
     font-size: 0.9rem;
+}
+
+/* ============================================
+   Copy button on AI chat responses
+   ============================================ */
+
+.chat-msg-wrapper {
+    position: relative;
+    align-self: flex-start;
+    max-width: 85%;
+    width: 100%;
+}
+
+.chat-msg-wrapper .chat-message {
+    max-width: 100%;
+}
+
+.btn-copy-chat {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    padding: 3px 8px;
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 0.7rem;
+    font-family: inherit;
+    opacity: 0;
+    transition: opacity var(--transition-fast), background var(--transition-fast);
+    z-index: 1;
+}
+
+.chat-msg-wrapper:hover .btn-copy-chat {
+    opacity: 1;
+}
+
+.btn-copy-chat:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+/* ============================================
+   Summary tab header (regenerate button)
+   ============================================ */
+
+.summary-tab-header {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    margin-bottom: 8px;
+}
+
+/* ============================================
+   Knowledge & Rubrica Panels
+   ============================================ */
+
+.chat-panels {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    margin-bottom: 8px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.chat-panel-section + .chat-panel-section {
+    border-top: 1px solid var(--border-color);
+}
+
+.chat-panel-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: none;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-family: inherit;
+    font-weight: 500;
+    transition: background var(--transition-fast);
+}
+
+.chat-panel-toggle:hover {
+    background: var(--bg-tertiary);
+}
+
+.panel-arrow {
+    width: 16px;
+    height: 16px;
+    transition: transform var(--transition-fast);
+}
+
+.chat-panel-toggle.open .panel-arrow {
+    transform: rotate(180deg);
+}
+
+.chat-panel-body {
+    padding: 12px 14px;
+    background: var(--bg-primary);
+}
+
+.chat-panel-body.hidden {
+    display: none;
+}
+
+.panel-hint {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+}
+
+.knowledge-files, .rubrica-files {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.knowledge-file-item, .rubrica-file-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.knowledge-file-item .file-name, .rubrica-file-item .file-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.knowledge-file-item .btn-delete-file, .rubrica-file-item .btn-delete-file {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 2px 4px;
+    font-size: 0.75rem;
+    transition: color var(--transition-fast);
+}
+
+.knowledge-file-item .btn-delete-file:hover, .rubrica-file-item .btn-delete-file:hover {
+    color: var(--error);
+}
+
+.btn-upload-knowledge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-family: inherit;
+    transition: all var(--transition-fast);
+}
+
+.btn-upload-knowledge:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border-color: var(--accent-primary);
+}
+
+.btn-upload-knowledge svg {
+    width: 14px;
+    height: 14px;
+}
+
+.rubrica-textarea {
+    width: 100%;
+    padding: 8px 10px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    font-family: inherit;
+    resize: vertical;
+    margin-bottom: 8px;
+    box-sizing: border-box;
+    transition: border-color var(--transition-fast);
+}
+
+.rubrica-textarea:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+}
+
+.rubrica-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn-save-rubrica {
+    padding: 6px 14px;
+    background: var(--accent-primary);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-family: inherit;
+    font-weight: 500;
+    transition: background var(--transition-fast);
+}
+
+.btn-save-rubrica:hover {
+    background: var(--accent-secondary);
 }
