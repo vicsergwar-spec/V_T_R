@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # ─── Parámetros de detección de escenas ─────────────────────────────────────
 SCENE_THRESHOLD = 0.15      # Sensibilidad (0-1, menor = más sensible)
 MIN_FRAME_INTERVAL_S = 30   # Garantizar al menos 1 frame cada 30s
-MAX_SLIDES = 80             # Máximo de slides a procesar por video
+MAX_SLIDES_BASE = 80        # Mínimo de slides a procesar por video
 MAX_FRAME_WIDTH = 1280      # Reducir frames grandes para ahorrar ancho de banda
 
 # ─── Eficiencia: blancos y duplicados ────────────────────────────────────────
@@ -511,9 +511,10 @@ class SlideExtractor:
             paired.append((ts, str(fp)))
         paired.sort(key=lambda x: x[0])
 
-        if len(paired) > MAX_SLIDES:
-            step = len(paired) / MAX_SLIDES
-            paired = [paired[int(i * step)] for i in range(MAX_SLIDES)]
+        max_slides = max(MAX_SLIDES_BASE, int(video_duration / 30) + 20) if video_duration > 0 else MAX_SLIDES_BASE
+        if len(paired) > max_slides:
+            step = len(paired) / max_slides
+            paired = [paired[int(i * step)] for i in range(max_slides)]
 
         return [(fp, ts) for ts, fp in paired]
 
@@ -577,89 +578,58 @@ class SlideExtractor:
     ) -> list[dict]:
         """
         Detecta sub-imágenes (fotos, diagramas incrustados) dentro de un frame
-        usando detección de contornos con diferencia de color respecto al fondo.
+        usando cv2.findContours para obtener bounding boxes de regiones.
         Guarda cada sub-imagen como archivo independiente.
         """
         try:
+            import cv2
+            import numpy as np
+        except ImportError:
+            logger.warning("OpenCV no disponible, omitiendo extracción de sub-imágenes")
+            return []
+
+        try:
+            img_cv = cv2.imread(frame_path)
+            if img_cv is None:
+                return []
+
+            h, w = img_cv.shape[:2]
+            min_area = (w * h) * 0.02
+            max_area = (w * h) * 0.85
+            min_dim = 60
+
+            gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+
+            # Determinar color de fondo desde los bordes
+            border = np.concatenate([
+                gray[0, :], gray[-1, :], gray[:, 0], gray[:, -1]
+            ])
+            bg_val = int(np.median(border))
+
+            # Crear máscara binaria: píxeles que difieren del fondo
+            diff = cv2.absdiff(gray, np.full_like(gray, bg_val))
+            _, mask = cv2.threshold(diff, 40, 255, cv2.THRESH_BINARY)
+
+            # Encontrar contornos externos
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            regions = []
+            for cnt in contours:
+                x, y, rw, rh = cv2.boundingRect(cnt)
+                area = rw * rh
+                if area < min_area or area > max_area:
+                    continue
+                if rw < min_dim or rh < min_dim:
+                    continue
+                regions.append((x, y, x + rw, y + rh))
+
+            if not regions:
+                return []
+
+            regions = self._merge_overlapping_regions(regions)
+
+            sub_images = []
             with Image.open(frame_path) as img:
-                w, h = img.size
-                min_area = (w * h) * 0.02
-                max_area = (w * h) * 0.85
-                min_dim = 60
-
-                gray = img.convert("L")
-
-                border_pixels = []
-                for x in range(w):
-                    border_pixels.append(gray.getpixel((x, 0)))
-                    border_pixels.append(gray.getpixel((x, h - 1)))
-                for y in range(h):
-                    border_pixels.append(gray.getpixel((0, y)))
-                    border_pixels.append(gray.getpixel((w - 1, y)))
-
-                from collections import Counter
-                bg_val = Counter(border_pixels).most_common(1)[0][0]
-
-                threshold = 40
-                mask = Image.new("L", (w, h), 0)
-                mask_pixels = mask.load()
-                gray_pixels = gray.load()
-                for y in range(h):
-                    for x in range(w):
-                        if abs(gray_pixels[x, y] - bg_val) > threshold:
-                            mask_pixels[x, y] = 255
-
-                visited = set()
-                regions = []
-
-                def _flood_fill(sx, sy):
-                    stack = [(sx, sy)]
-                    x_min, x_max, y_min, y_max = sx, sx, sy, sy
-                    count = 0
-                    while stack:
-                        cx, cy = stack.pop()
-                        if (cx, cy) in visited:
-                            continue
-                        if cx < 0 or cy < 0 or cx >= w or cy >= h:
-                            continue
-                        if mask_pixels[cx, cy] == 0:
-                            continue
-                        visited.add((cx, cy))
-                        count += 1
-                        x_min = min(x_min, cx)
-                        x_max = max(x_max, cx)
-                        y_min = min(y_min, cy)
-                        y_max = max(y_max, cy)
-                        for dx, dy in [(-2, 0), (2, 0), (0, -2), (0, 2)]:
-                            nx, ny = cx + dx, cy + dy
-                            if 0 <= nx < w and 0 <= ny < h and (nx, ny) not in visited:
-                                stack.append((nx, ny))
-                    return x_min, y_min, x_max, y_max, count
-
-                step = max(4, min(w, h) // 100)
-                for sy in range(0, h, step):
-                    for sx in range(0, w, step):
-                        if (sx, sy) in visited or mask_pixels[sx, sy] == 0:
-                            continue
-                        x1, y1, x2, y2, cnt = _flood_fill(sx, sy)
-                        rw = x2 - x1
-                        rh = y2 - y1
-                        area = rw * rh
-                        if area < min_area or area > max_area:
-                            continue
-                        if rw < min_dim or rh < min_dim:
-                            continue
-                        density = cnt / max(area / 4, 1)
-                        if density < 0.05:
-                            continue
-                        regions.append((x1, y1, x2, y2))
-
-                if not regions:
-                    return []
-
-                regions = self._merge_overlapping_regions(regions)
-
-                sub_images = []
                 for idx, (x1, y1, x2, y2) in enumerate(regions[:5]):
                     pad = 4
                     x1 = max(0, x1 - pad)
@@ -672,7 +642,6 @@ class SlideExtractor:
                     sub_path = images_dir / sub_name
                     cropped.save(str(sub_path), "PNG", compress_level=1)
 
-                    # Describir sub-imagen con Gemini
                     description = self._describe_sub_image(str(sub_path))
 
                     sub_images.append({
@@ -680,7 +649,7 @@ class SlideExtractor:
                         "description": description,
                     })
 
-                return sub_images
+            return sub_images
 
         except Exception as e:
             logger.warning(f"Error extrayendo sub-imágenes del slide {slide_num}: {e}")

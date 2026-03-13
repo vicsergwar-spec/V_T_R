@@ -948,7 +948,7 @@ INSTRUCCIONES:
         Returns:
             El nombre del caché usado/creado, o None si no se usó caché
         """
-        MAX_TRANSCRIPTION = 30_000
+        MAX_TRANSCRIPTION = 80_000
         MAX_SUMMARY = 3_000
         MAX_SLIDES = 8_000
 
