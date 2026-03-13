@@ -105,6 +105,12 @@ const elements = {
     rubricaFileInput: document.getElementById('rubricaFileInput'),
     saveRubricaBtn: document.getElementById('saveRubricaBtn'),
 
+    // Images panel (class chat)
+    imagesToggle: document.getElementById('imagesToggle'),
+    imagesPanel: document.getElementById('imagesPanel'),
+    contextImageFiles: document.getElementById('contextImageFiles'),
+    contextImageFileInput: document.getElementById('contextImageFileInput'),
+
     // Chat de carpeta
     folderChatSection: document.getElementById('folder-chat-section'),
     folderChatBackBtn: document.getElementById('folderChatBackBtn'),
@@ -127,6 +133,12 @@ const elements = {
     folderRubricaText: document.getElementById('folderRubricaText'),
     folderRubricaFileInput: document.getElementById('folderRubricaFileInput'),
     folderSaveRubricaBtn: document.getElementById('folderSaveRubricaBtn'),
+
+    // Images panel (folder chat)
+    folderImagesToggle: document.getElementById('folderImagesToggle'),
+    folderImagesPanel: document.getElementById('folderImagesPanel'),
+    folderContextImageFiles: document.getElementById('folderContextImageFiles'),
+    folderContextImageFileInput: document.getElementById('folderContextImageFileInput'),
 
     // Modal confirmar
     confirmModal: document.getElementById('confirmModal'),
@@ -1599,9 +1611,10 @@ async function loadClassChat(classId) {
             resetChat();
         }
 
-        // Cargar archivos de conocimiento y rúbricas
+        // Cargar archivos de conocimiento, rúbricas e imágenes
         await loadKnowledgeFiles(classId);
         await loadRubricaFiles(classId);
+        await loadContextImages(classId);
     } catch (error) {
         console.error('Error loading chat session:', error);
         resetChat();
@@ -1794,9 +1807,10 @@ async function showFolderChat(folderPath, folderName, classCount) {
     resetFolderChat();
     await loadFolderChatSession(folderPath);
 
-    // Load knowledge and rubrica files for folder
+    // Load knowledge, rubrica and image files for folder
     await loadKnowledgeFiles(folderPath, elements.folderKnowledgeFiles);
     await loadRubricaFiles(folderPath, elements.folderRubricaFiles);
+    await loadContextImages(folderPath, elements.folderContextImageFiles);
 }
 
 async function loadFolderChatSession(folderPath) {
@@ -2124,16 +2138,20 @@ function initPanels() {
     // Class chat panels
     _initToggle(elements.knowledgeToggle, elements.knowledgePanel);
     _initToggle(elements.rubricaToggle, elements.rubricaPanel);
+    _initToggle(elements.imagesToggle, elements.imagesPanel);
 
     // Folder chat panels
     _initToggle(elements.folderKnowledgeToggle, elements.folderKnowledgePanel);
     _initToggle(elements.folderRubricaToggle, elements.folderRubricaPanel);
+    _initToggle(elements.folderImagesToggle, elements.folderImagesPanel);
 
     // Class chat: knowledge file upload
     if (elements.knowledgeFileInput) {
         elements.knowledgeFileInput.addEventListener('change', async (e) => {
             if (!state.currentClass || !e.target.files.length) return;
-            await uploadKnowledgeFile(state.currentClass.id, e.target.files[0], elements.knowledgeFiles);
+            for (const f of e.target.files) {
+                await uploadKnowledgeFile(state.currentClass.id, f, elements.knowledgeFiles);
+            }
             e.target.value = '';
         });
     }
@@ -2142,7 +2160,20 @@ function initPanels() {
     if (elements.rubricaFileInput) {
         elements.rubricaFileInput.addEventListener('change', async (e) => {
             if (!state.currentClass || !e.target.files.length) return;
-            await uploadRubricaFile(state.currentClass.id, e.target.files[0], elements.rubricaFiles);
+            for (const f of e.target.files) {
+                await uploadRubricaFile(state.currentClass.id, f, elements.rubricaFiles);
+            }
+            e.target.value = '';
+        });
+    }
+
+    // Class chat: context image upload
+    if (elements.contextImageFileInput) {
+        elements.contextImageFileInput.addEventListener('change', async (e) => {
+            if (!state.currentClass || !e.target.files.length) return;
+            for (const f of e.target.files) {
+                await uploadContextImage(state.currentClass.id, f, elements.contextImageFiles);
+            }
             e.target.value = '';
         });
     }
@@ -2162,7 +2193,9 @@ function initPanels() {
     if (elements.folderKnowledgeFileInput) {
         elements.folderKnowledgeFileInput.addEventListener('change', async (e) => {
             if (!state.currentFolder || !e.target.files.length) return;
-            await uploadKnowledgeFile(state.currentFolder.path, e.target.files[0], elements.folderKnowledgeFiles);
+            for (const f of e.target.files) {
+                await uploadKnowledgeFile(state.currentFolder.path, f, elements.folderKnowledgeFiles);
+            }
             e.target.value = '';
         });
     }
@@ -2171,7 +2204,20 @@ function initPanels() {
     if (elements.folderRubricaFileInput) {
         elements.folderRubricaFileInput.addEventListener('change', async (e) => {
             if (!state.currentFolder || !e.target.files.length) return;
-            await uploadRubricaFile(state.currentFolder.path, e.target.files[0], elements.folderRubricaFiles);
+            for (const f of e.target.files) {
+                await uploadRubricaFile(state.currentFolder.path, f, elements.folderRubricaFiles);
+            }
+            e.target.value = '';
+        });
+    }
+
+    // Folder chat: context image upload
+    if (elements.folderContextImageFileInput) {
+        elements.folderContextImageFileInput.addEventListener('change', async (e) => {
+            if (!state.currentFolder || !e.target.files.length) return;
+            for (const f of e.target.files) {
+                await uploadContextImage(state.currentFolder.path, f, elements.folderContextImageFiles);
+            }
             e.target.value = '';
         });
     }
@@ -2186,6 +2232,16 @@ function initPanels() {
             elements.folderRubricaText.value = '';
         });
     }
+
+    // Drop zones for class chat panels
+    _initDropZone(elements.knowledgePanel, elements.knowledgeFileInput);
+    _initDropZone(elements.rubricaPanel, elements.rubricaFileInput);
+    _initDropZone(elements.imagesPanel, elements.contextImageFileInput);
+
+    // Drop zones for folder chat panels
+    _initDropZone(elements.folderKnowledgePanel, elements.folderKnowledgeFileInput);
+    _initDropZone(elements.folderRubricaPanel, elements.folderRubricaFileInput);
+    _initDropZone(elements.folderImagesPanel, elements.folderContextImageFileInput);
 }
 
 function _initToggle(toggleBtn, panelEl) {
@@ -2193,6 +2249,36 @@ function _initToggle(toggleBtn, panelEl) {
     toggleBtn.addEventListener('click', () => {
         panelEl.classList.toggle('hidden');
         toggleBtn.classList.toggle('open');
+    });
+}
+
+function _initDropZone(panelBody, fileInput) {
+    if (!panelBody || !fileInput) return;
+    ['dragenter', 'dragover'].forEach(evt => {
+        panelBody.addEventListener(evt, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            panelBody.classList.add('drop-zone-active');
+        });
+    });
+    panelBody.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!panelBody.contains(e.relatedTarget)) {
+            panelBody.classList.remove('drop-zone-active');
+        }
+    });
+    panelBody.addEventListener('drop', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        panelBody.classList.remove('drop-zone-active');
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            const dt = new DataTransfer();
+            for (let i = 0; i < files.length; i++) dt.items.add(files[i]);
+            fileInput.files = dt.files;
+            fileInput.dispatchEvent(new Event('change'));
+        }
     });
 }
 
@@ -2249,6 +2335,33 @@ async function saveRubricaText(classId, text, containerEl) {
     }
 }
 
+async function uploadContextImage(classId, file, containerEl) {
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+        const res = await fetch(`/api/chat/${classId}/image`, { method: 'POST', body: formData });
+        const data = await res.json();
+        if (data.success) {
+            showToast('success', 'Imagen subida', data.filename);
+            await loadContextImages(classId, containerEl);
+        } else {
+            showToast('error', 'Error', data.error || 'No se pudo subir');
+        }
+    } catch (err) {
+        showToast('error', 'Error', 'Error de conexion');
+    }
+}
+
+async function loadContextImages(classId, containerEl) {
+    const container = containerEl || elements.contextImageFiles;
+    if (!container) return;
+    try {
+        const res = await fetch(`/api/chat/${classId}/images`);
+        const data = await res.json();
+        renderFileList(data.files || [], container, classId, 'image');
+    } catch (_) {}
+}
+
 async function loadKnowledgeFiles(classId, containerEl) {
     const container = containerEl || elements.knowledgeFiles;
     if (!container) return;
@@ -2274,8 +2387,11 @@ function renderFileList(files, container, classId, type) {
         container.innerHTML = '';
         return;
     }
+    const itemClass = type === 'knowledge' ? 'knowledge-file-item'
+                    : type === 'rubrica' ? 'rubrica-file-item'
+                    : 'context-image-file-item';
     container.innerHTML = files.map(f => `
-        <div class="${type === 'knowledge' ? 'knowledge-file-item' : 'rubrica-file-item'}">
+        <div class="${itemClass}">
             <span class="file-name">${escapeHtml(f.name)}</span>
             <button class="btn-delete-file" data-name="${escapeHtml(f.name)}" title="Eliminar">x</button>
         </div>`).join('');
@@ -2283,15 +2399,21 @@ function renderFileList(files, container, classId, type) {
     container.querySelectorAll('.btn-delete-file').forEach(btn => {
         btn.addEventListener('click', async () => {
             const filename = btn.dataset.name;
-            const endpoint = type === 'knowledge'
-                ? `/api/chat/${classId}/knowledge/${encodeURIComponent(filename)}`
-                : `/api/chat/${classId}/rubrica/${encodeURIComponent(filename)}`;
+            let endpoint;
+            if (type === 'knowledge') {
+                endpoint = `/api/chat/${classId}/knowledge/${encodeURIComponent(filename)}`;
+            } else if (type === 'rubrica') {
+                endpoint = `/api/chat/${classId}/rubrica/${encodeURIComponent(filename)}`;
+            } else {
+                endpoint = `/api/chat/${classId}/image/${encodeURIComponent(filename)}`;
+            }
             try {
                 const res = await fetch(endpoint, { method: 'DELETE' });
                 const data = await res.json();
                 if (data.success) {
                     if (type === 'knowledge') await loadKnowledgeFiles(classId, container);
-                    else await loadRubricaFiles(classId, container);
+                    else if (type === 'rubrica') await loadRubricaFiles(classId, container);
+                    else await loadContextImages(classId, container);
                     showToast('success', 'Eliminado', filename);
                 }
             } catch (_) {

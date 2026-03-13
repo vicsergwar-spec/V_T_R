@@ -456,6 +456,7 @@ Responde SOLO con el documento Markdown (incluyendo el frontmatter YAML), sin ex
         cached_content_name: str = None,
         knowledge_text: str = "",
         rubricas_text: str = "",
+        context_images: list = None,
     ) -> Optional[str]:
         """
         Inicia (o restaura) una sesión de chat para una clase.
@@ -528,22 +529,99 @@ INSTRUCCIONES:
             "history": list(history) if history else [],
             "knowledge_text": knowledge_text or "",
             "rubricas_text": rubricas_text or "",
+            "context_images": context_images or [],
         }
         action = "restaurada" if history else "iniciada"
         logger.info(
             f"Sesión de chat {action} para clase: {class_id} "
             f"({len(self.chat_sessions[class_id]['history'])} mensajes previos, "
-            f"caché: {'sí' if cache_name else 'no'})"
+            f"caché: {'sí' if cache_name else 'no'}, "
+            f"imágenes: {len(self.chat_sessions[class_id]['context_images'])})"
         )
         return cache_name
 
-    def chat(self, class_id: str, user_message: str) -> str:
+    def _is_cache_not_found_error(self, error: Exception) -> bool:
+        """Detecta si el error es un 403 CachedContent not found."""
+        err_str = str(error).lower()
+        return (
+            "cachedcontent" in err_str
+            or "cached_content" in err_str
+            or ("403" in err_str and "not found" in err_str)
+        )
+
+    def _rebuild_session(self, session_key: str, file_manager) -> None:
+        """
+        Reconstruye una sesión de chat tras un error de caché expirado.
+        Detecta si es clase o carpeta por el prefijo __folder__.
+        """
+        # Preservar historial actual antes de limpiar
+        old_history = self.chat_sessions.get(session_key, {}).get("history", [])
+
+        # Limpiar sesión en memoria
+        if session_key in self.chat_sessions:
+            del self.chat_sessions[session_key]
+
+        is_folder = session_key.startswith("__folder__")
+
+        if is_folder:
+            folder_path = session_key[len("__folder__"):]
+
+            # Limpiar caché en disco
+            file_manager.delete_folder_cache_name(folder_path)
+
+            # Reconstruir sesión de carpeta
+            classes_content = file_manager.get_folder_all_content(folder_path)
+            folder_name = folder_path.split("/")[-1].replace("_", " ")
+            context_images = file_manager.get_context_images_data(folder_path)
+
+            new_cache_name = self.start_folder_chat_session(
+                folder_id=session_key,
+                folder_name=folder_name,
+                classes_content=classes_content,
+                history=old_history,
+                cached_content_name=None,  # Forzar nuevo caché
+                context_images=context_images,
+            )
+            if new_cache_name:
+                file_manager.save_folder_cache_name(folder_path, new_cache_name)
+
+        else:
+            class_id = session_key
+
+            # Limpiar caché en disco
+            file_manager.delete_cache_name(class_id)
+
+            # Reconstruir sesión de clase
+            transcription_text = file_manager.get_transcription_text(class_id) or ""
+            slides_content = file_manager.get_slides_document(class_id) \
+                or file_manager.get_slides(class_id) or ""
+            knowledge_text = file_manager.get_knowledge_text(class_id) or ""
+            rubricas_text = file_manager.get_rubricas_text(class_id) or ""
+            context_images = file_manager.get_context_images_data(class_id)
+
+            new_cache_name = self.start_chat_session(
+                class_id,
+                transcription_text,
+                slides_content=slides_content,
+                history=old_history,
+                cached_content_name=None,  # Forzar nuevo caché
+                knowledge_text=knowledge_text,
+                rubricas_text=rubricas_text,
+                context_images=context_images,
+            )
+            if new_cache_name:
+                file_manager.save_cache_name(class_id, new_cache_name)
+
+        logger.info(f"Sesión reconstruida tras error de caché: {session_key}")
+
+    def chat(self, class_id: str, user_message: str, file_manager=None) -> str:
         """
         Envía un mensaje en la sesión de chat de una clase.
 
         Args:
-            class_id: Identificador de la clase
+            class_id: Identificador de la clase (o session_key para carpetas)
             user_message: Mensaje del usuario
+            file_manager: Referencia al FileManager para auto-recovery de caché
 
         Returns:
             Respuesta de Gemini
@@ -554,26 +632,52 @@ INSTRUCCIONES:
         session = self.chat_sessions[class_id]
 
         try:
-            # Construir mensaje con contexto adicional prepended (sin tocar la caché)
-            enriched_message = self._prepend_extra_context(
-                user_message,
-                session.get("knowledge_text", ""),
-                session.get("rubricas_text", ""),
-            )
-
-            response = session["chat"].send_message(enriched_message)
-            assistant_message = response.text.strip()
-
-            # Guardar en historial local el mensaje ORIGINAL (sin el contexto prepended)
-            session["history"].append({"role": "user", "content": user_message})
-            session["history"].append({"role": "model", "content": assistant_message})
-
-            logger.info(f"Chat respondido para clase: {class_id}")
-            return assistant_message
+            return self._send_chat_message(class_id, session, user_message)
 
         except Exception as e:
+            # Si es error de CachedContent y tenemos file_manager, auto-recovery
+            if file_manager and self._is_cache_not_found_error(e):
+                logger.warning(
+                    f"CachedContent expirado para {class_id}, reconstruyendo sesión..."
+                )
+                try:
+                    self._rebuild_session(class_id, file_manager)
+                    session = self.chat_sessions[class_id]
+                    return self._send_chat_message(class_id, session, user_message)
+                except Exception as retry_err:
+                    logger.error(f"Error en retry tras reconstruir sesión: {retry_err}")
+                    return "Lo siento, hubo un error al procesar tu pregunta. Por favor, intenta de nuevo."
+
             logger.error(f"Error en chat: {e}")
-            return f"Lo siento, hubo un error al procesar tu pregunta. Por favor, intenta de nuevo."
+            return "Lo siento, hubo un error al procesar tu pregunta. Por favor, intenta de nuevo."
+
+    def _send_chat_message(self, class_id: str, session: dict, user_message: str) -> str:
+        """Envía el mensaje y actualiza el historial. Lanza excepciones sin capturar."""
+        enriched_message = self._prepend_extra_context(
+            user_message,
+            session.get("knowledge_text", ""),
+            session.get("rubricas_text", ""),
+        )
+
+        context_images = session.get("context_images", [])
+        if context_images:
+            message_parts = [enriched_message]
+            for img in context_images:
+                message_parts.append({
+                    "mime_type": img["mime_type"],
+                    "data": img["data"],
+                })
+            response = session["chat"].send_message(message_parts)
+        else:
+            response = session["chat"].send_message(enriched_message)
+
+        assistant_message = response.text.strip()
+
+        session["history"].append({"role": "user", "content": user_message})
+        session["history"].append({"role": "model", "content": assistant_message})
+
+        logger.info(f"Chat respondido para clase: {class_id}")
+        return assistant_message
 
     @staticmethod
     def _prepend_extra_context(user_message: str, knowledge_text: str, rubricas_text: str) -> str:
@@ -633,6 +737,7 @@ INSTRUCCIONES:
         cached_content_name: str = None,
         knowledge_text: str = "",
         rubricas_text: str = "",
+        context_images: list = None,
     ) -> Optional[str]:
         """
         Inicia (o restaura) una sesión de chat para una carpeta completa.
@@ -709,6 +814,7 @@ INSTRUCCIONES:
             "history": list(history) if history else [],
             "knowledge_text": knowledge_text or "",
             "rubricas_text": rubricas_text or "",
+            "context_images": context_images or [],
         }
 
         action = "restaurada" if history else "iniciada"

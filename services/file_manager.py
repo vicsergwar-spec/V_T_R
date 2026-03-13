@@ -245,6 +245,15 @@ class FileManager:
         path = self.clases_dir / class_id / "gemini_cache.txt"
         path.write_text(cache_name, encoding="utf-8")
 
+    def delete_cache_name(self, class_id: str) -> None:
+        """Elimina el archivo de caché de Gemini de una clase."""
+        path = self.clases_dir / class_id / "gemini_cache.txt"
+        if path.exists():
+            try:
+                path.unlink()
+            except Exception as e:
+                logger.warning(f"Error al eliminar caché de clase: {e}")
+
     # ──────────────────────────────────────────────────────────
     # Chat general de carpeta
     # ──────────────────────────────────────────────────────────
@@ -313,6 +322,15 @@ class FileManager:
         """Guarda el nombre del caché de Gemini para el chat de carpeta."""
         path = self.clases_dir / folder_path / "folder_gemini_cache.txt"
         path.write_text(cache_name, encoding="utf-8")
+
+    def delete_folder_cache_name(self, folder_path: str) -> None:
+        """Elimina el archivo de caché de Gemini del chat de carpeta."""
+        path = self.clases_dir / folder_path / "folder_gemini_cache.txt"
+        if path.exists():
+            try:
+                path.unlink()
+            except Exception as e:
+                logger.warning(f"Error al eliminar caché de carpeta: {e}")
 
     def delete_class(self, class_id: str) -> bool:
         class_folder = self.clases_dir / class_id
@@ -436,7 +454,7 @@ class FileManager:
             if not f.is_file():
                 continue
             ext = f.suffix.lower()
-            if ext == '.txt':
+            if ext in ('.txt', '.md', '.markdown'):
                 try:
                     content = f.read_text(encoding="utf-8")
                     parts.append(f"--- Archivo: {f.name} ---\n{content}")
@@ -512,7 +530,7 @@ class FileManager:
             if not f.is_file():
                 continue
             ext = f.suffix.lower()
-            if ext in ('.txt', '.md'):
+            if ext in ('.txt', '.md', '.markdown'):
                 try:
                     content = f.read_text(encoding="utf-8")
                     parts.append(f"--- Rúbrica: {f.name} ---\n{content}")
@@ -536,6 +554,65 @@ class FileManager:
                 except Exception:
                     parts.append(f"--- Rúbrica DOCX: {f.name} (contenido no extraible) ---")
         return "\n\n".join(parts)
+
+    # ──────────────────────────────────────────────────────────
+    # Imágenes de contexto para chat
+    # ──────────────────────────────────────────────────────────
+
+    def save_context_image(self, class_id: str, filename: str, file_storage) -> str:
+        """Guarda una imagen de contexto en context_images/"""
+        images_dir = self.clases_dir / class_id / "context_images"
+        images_dir.mkdir(parents=True, exist_ok=True)
+        safe_name = self._sanitize_knowledge_filename(filename)
+        dest = images_dir / safe_name
+        file_storage.save(str(dest))
+        logger.info(f"Imagen de contexto guardada: {dest}")
+        return safe_name
+
+    def get_context_images(self, class_id: str) -> list:
+        """Lista archivos de imágenes de contexto."""
+        images_dir = self.clases_dir / class_id / "context_images"
+        if not images_dir.exists():
+            return []
+        files = []
+        for f in sorted(images_dir.iterdir()):
+            if f.is_file() and f.suffix.lower() in ('.jpg', '.jpeg', '.png', '.webp', '.gif'):
+                files.append({"name": f.name, "size": f.stat().st_size})
+        return files
+
+    def delete_context_image(self, class_id: str, filename: str) -> bool:
+        """Elimina una imagen de contexto."""
+        fpath = self.clases_dir / class_id / "context_images" / filename
+        if fpath.exists():
+            fpath.unlink()
+            logger.info(f"Imagen de contexto eliminada: {fpath}")
+            return True
+        return False
+
+    def get_context_images_data(self, class_id: str) -> list:
+        """Lee todas las imágenes de contexto como datos binarios para enviar a Gemini."""
+        images_dir = self.clases_dir / class_id / "context_images"
+        if not images_dir.exists():
+            return []
+        mime_map = {
+            '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+            '.png': 'image/png', '.webp': 'image/webp',
+            '.gif': 'image/gif',
+        }
+        result = []
+        for f in sorted(images_dir.iterdir()):
+            ext = f.suffix.lower()
+            if f.is_file() and ext in mime_map:
+                try:
+                    data = f.read_bytes()
+                    result.append({
+                        "name": f.name,
+                        "mime_type": mime_map[ext],
+                        "data": data,
+                    })
+                except Exception as e:
+                    logger.warning(f"Error leyendo imagen de contexto {f}: {e}")
+        return result
 
     @staticmethod
     def _sanitize_knowledge_filename(filename: str) -> str:

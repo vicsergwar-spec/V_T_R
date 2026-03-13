@@ -258,7 +258,7 @@
                             <label class="btn-upload-knowledge">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                                 Subir archivo
-                                <input type="file" id="folderKnowledgeFileInput" accept=".pdf,.txt,.docx,.doc,.png,.jpg,.jpeg,.webp" hidden>
+                                <input type="file" id="folderKnowledgeFileInput" accept=".pdf,.txt,.docx,.doc,.png,.jpg,.jpeg,.webp,.md,.markdown" hidden>
                             </label>
                         </div>
                     </div>
@@ -276,9 +276,24 @@
                                 <label class="btn-upload-knowledge">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                                     Subir archivo
-                                    <input type="file" id="folderRubricaFileInput" accept=".pdf,.txt,.docx,.doc" hidden>
+                                    <input type="file" id="folderRubricaFileInput" accept=".pdf,.txt,.docx,.doc,.md,.markdown" hidden>
                                 </label>
                             </div>
+                        </div>
+                    </div>
+                    <div class="chat-panel-section">
+                        <button class="chat-panel-toggle" id="folderImagesToggle">
+                            <span>Imagenes de contexto</span>
+                            <svg class="panel-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        </button>
+                        <div class="chat-panel-body hidden" id="folderImagesPanel">
+                            <p class="panel-hint">Sube imagenes (JPG, PNG, WEBP, GIF) como contexto visual para el chat de carpeta.</p>
+                            <div class="context-image-files" id="folderContextImageFiles"></div>
+                            <label class="btn-upload-knowledge">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                Subir imagen
+                                <input type="file" id="folderContextImageFileInput" accept=".jpg,.jpeg,.png,.webp,.gif" multiple hidden>
+                            </label>
                         </div>
                     </div>
                 </div>
@@ -420,7 +435,7 @@
                                     <label class="btn-upload-knowledge">
                                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                                         Subir archivo
-                                        <input type="file" id="knowledgeFileInput" accept=".pdf,.txt,.docx,.doc,.png,.jpg,.jpeg,.webp" hidden>
+                                        <input type="file" id="knowledgeFileInput" accept=".pdf,.txt,.docx,.doc,.png,.jpg,.jpeg,.webp,.md,.markdown" hidden>
                                     </label>
                                 </div>
                             </div>
@@ -438,9 +453,24 @@
                                         <label class="btn-upload-knowledge">
                                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                                             Subir archivo
-                                            <input type="file" id="rubricaFileInput" accept=".pdf,.txt,.docx,.doc" hidden>
+                                            <input type="file" id="rubricaFileInput" accept=".pdf,.txt,.docx,.doc,.md,.markdown" hidden>
                                         </label>
                                     </div>
+                                </div>
+                            </div>
+                            <div class="chat-panel-section">
+                                <button class="chat-panel-toggle" id="imagesToggle">
+                                    <span>Imagenes de contexto</span>
+                                    <svg class="panel-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                                </button>
+                                <div class="chat-panel-body hidden" id="imagesPanel">
+                                    <p class="panel-hint">Sube imagenes (JPG, PNG, WEBP, GIF) como contexto visual para el chat.</p>
+                                    <div class="context-image-files" id="contextImageFiles"></div>
+                                    <label class="btn-upload-knowledge">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                        Subir imagen
+                                        <input type="file" id="contextImageFileInput" accept=".jpg,.jpeg,.png,.webp,.gif" multiple hidden>
+                                    </label>
                                 </div>
                             </div>
                         </div>

@@ -2665,3 +2665,51 @@ body {
 .btn-save-rubrica:hover {
     background: var(--accent-secondary);
 }
+
+/* Drop zone active state */
+.chat-panel-body.drop-zone-active {
+    outline: 2px dashed var(--accent-primary);
+    outline-offset: -2px;
+    background: rgba(99, 102, 241, 0.06);
+}
+
+/* Context image files */
+.context-image-files {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.context-image-file-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.context-image-file-item .file-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.context-image-file-item .btn-delete-file {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 2px 4px;
+    font-size: 0.75rem;
+    transition: color var(--transition-fast);
+}
+
+.context-image-file-item .btn-delete-file:hover {
+    color: var(--error);
+}

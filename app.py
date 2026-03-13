@@ -1163,9 +1163,10 @@ def start_chat(class_id):
     saved_history = file_manager.get_chat_history(class_id) or []
     saved_cache_name = file_manager.get_cache_name(class_id)
 
-    # Leer conocimiento extra y rúbricas para RAM (NO se incluyen en la caché)
+    # Leer conocimiento extra, rúbricas e imágenes de contexto para RAM
     knowledge_text = file_manager.get_knowledge_text(class_id) or ""
     rubricas_text = file_manager.get_rubricas_text(class_id) or ""
+    context_images = file_manager.get_context_images_data(class_id)
 
     new_cache_name = gemini_service.start_chat_session(
         class_id, transcription_text,
@@ -1174,6 +1175,7 @@ def start_chat(class_id):
         cached_content_name=saved_cache_name,
         knowledge_text=knowledge_text,
         rubricas_text=rubricas_text,
+        context_images=context_images,
     )
 
     # Guardar el nuevo nombre de caché si cambió (caché creado o renovado)
@@ -1218,6 +1220,7 @@ def send_chat_message(class_id):
 
             knowledge_text = file_manager.get_knowledge_text(class_id) or ""
             rubricas_text = file_manager.get_rubricas_text(class_id) or ""
+            context_images = file_manager.get_context_images_data(class_id)
 
             new_cache_name = gemini_service.start_chat_session(
                 class_id, transcription_text,
@@ -1226,12 +1229,13 @@ def send_chat_message(class_id):
                 cached_content_name=saved_cache_name,
                 knowledge_text=knowledge_text,
                 rubricas_text=rubricas_text,
+                context_images=context_images,
             )
             if new_cache_name and new_cache_name != saved_cache_name:
                 file_manager.save_cache_name(class_id, new_cache_name)
 
-        # Enviar mensaje
-        response = gemini_service.chat(class_id, user_message)
+        # Enviar mensaje (con file_manager para auto-recovery de caché)
+        response = gemini_service.chat(class_id, user_message, file_manager=file_manager)
 
         # Persistir historial actualizado en disco
         updated_history = gemini_service.get_chat_history(class_id)
@@ -1301,12 +1305,15 @@ def start_folder_chat(folder_path):
     # Usamos folder_path como session key (prefijado para no colisionar con clases)
     session_key = f"__folder__{folder_path}"
 
+    context_images = file_manager.get_context_images_data(folder_path)
+
     new_cache_name = gemini_service.start_folder_chat_session(
         folder_id=session_key,
         folder_name=folder_name,
         classes_content=classes_content,
         history=saved_history,
         cached_content_name=saved_cache_name,
+        context_images=context_images,
     )
 
     if new_cache_name and new_cache_name != saved_cache_name:
@@ -1348,6 +1355,7 @@ def send_folder_chat_message(folder_path):
             folder_name = folder_path.split("/")[-1].replace("_", " ")
             saved_history = file_manager.get_folder_chat_history(folder_path) or []
             saved_cache_name = file_manager.get_folder_cache_name(folder_path)
+            context_images = file_manager.get_context_images_data(folder_path)
 
             new_cache_name = gemini_service.start_folder_chat_session(
                 folder_id=session_key,
@@ -1355,11 +1363,12 @@ def send_folder_chat_message(folder_path):
                 classes_content=classes_content,
                 history=saved_history,
                 cached_content_name=saved_cache_name,
+                context_images=context_images,
             )
             if new_cache_name and new_cache_name != saved_cache_name:
                 file_manager.save_folder_cache_name(folder_path, new_cache_name)
 
-        response = gemini_service.chat(session_key, user_message)
+        response = gemini_service.chat(session_key, user_message, file_manager=file_manager)
 
         updated_history = gemini_service.get_chat_history(session_key)
         file_manager.save_folder_chat_history(folder_path, updated_history)
@@ -1495,6 +1504,47 @@ def delete_rubrica(class_id, filename):
         if class_id in gemini_service.chat_sessions:
             gemini_service.chat_sessions[class_id]["rubricas_text"] = \
                 file_manager.get_rubricas_text(class_id) or ""
+        return jsonify({"success": True})
+    return jsonify({"error": "Archivo no encontrado"}), 404
+
+
+# ============== RUTAS DE IMÁGENES DE CONTEXTO ==============
+
+@app.route('/api/chat/<path:class_id>/image', methods=['POST'])
+def upload_context_image(class_id):
+    """Sube una imagen de contexto para el chat de una clase."""
+    if 'file' not in request.files:
+        return jsonify({"error": "No se envió ningún archivo"}), 400
+    f = request.files['file']
+    if not f.filename:
+        return jsonify({"error": "Nombre de archivo vacío"}), 400
+    try:
+        saved_name = file_manager.save_context_image(class_id, f.filename, f)
+        # Actualizar imágenes de contexto en RAM
+        if gemini_service and class_id in gemini_service.chat_sessions:
+            gemini_service.chat_sessions[class_id]["context_images"] = \
+                file_manager.get_context_images_data(class_id)
+        return jsonify({"success": True, "filename": saved_name})
+    except Exception as e:
+        logger.error(f"Error subiendo imagen de contexto: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/chat/<path:class_id>/images', methods=['GET'])
+def list_context_images(class_id):
+    """Lista imágenes de contexto de una clase."""
+    files = file_manager.get_context_images(class_id)
+    return jsonify({"files": files})
+
+
+@app.route('/api/chat/<path:class_id>/image/<filename>', methods=['DELETE'])
+def delete_context_image_route(class_id, filename):
+    """Elimina una imagen de contexto."""
+    success = file_manager.delete_context_image(class_id, filename)
+    if success:
+        if gemini_service and class_id in gemini_service.chat_sessions:
+            gemini_service.chat_sessions[class_id]["context_images"] = \
+                file_manager.get_context_images_data(class_id)
         return jsonify({"success": True})
     return jsonify({"error": "Archivo no encontrado"}), 404
 
