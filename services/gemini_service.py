@@ -1234,3 +1234,86 @@ INSTRUCCIONES:
         except Exception as e:
             logger.error(f"Error extrayendo actividad: {e}")
             raise
+
+    def extract_activity_from_folder(
+        self, classes_content: list, folder_name: str, activity_name: str
+    ) -> str:
+        """Extrae información de una actividad buscando en todas las clases de una carpeta."""
+        classes_blocks = []
+        for cls in classes_content:
+            parts = []
+            if cls.get("transcription"):
+                parts.append(f"Transcripción:\n{cls['transcription'][:30000]}")
+            if cls.get("summary"):
+                parts.append(f"Resumen:\n{cls['summary'][:3000]}")
+            if cls.get("slides"):
+                parts.append(f"Slides:\n{cls['slides'][:5000]}")
+            if parts:
+                classes_blocks.append(
+                    f"### CLASE: {cls['name']}\n\n" + "\n\n".join(parts)
+                )
+
+        context = "\n\n---\n\n".join(classes_blocks)
+
+        prompt = f"""Eres un asistente académico experto. Busca TODA la información relacionada con la actividad
+"{activity_name}" en el contenido de TODAS las clases de la carpeta "{folder_name}".
+
+CONTENIDO DE LAS CLASES:
+{context}
+
+Tu tarea es consolidar TODA la información que encuentres sobre la actividad "{activity_name}"
+en un único documento Markdown organizado. Indica SIEMPRE de qué clase proviene cada dato.
+
+GENERA EL DOCUMENTO CON ESTA ESTRUCTURA EXACTA:
+
+# {activity_name}
+
+**Carpeta:** {folder_name}
+**Extraído el:** (fecha actual)
+**Clases analizadas:** (lista las clases donde se encontró información)
+
+## Descripción
+(Describe de qué trata la actividad consolidando lo mencionado en las distintas clases. Indica entre paréntesis la clase de origen de cada dato, ej: *(Clase 3 - Tema X)*)
+
+## Objetivos
+(Lista los objetivos o propósitos de la actividad, indicando la clase fuente)
+
+## Instrucciones
+(Detalla paso a paso qué debe hacer el estudiante. Si hay instrucciones específicas del profesor, inclúyelas textualmente con la clase de origen)
+
+## Criterios de evaluación
+(Si hay rúbrica o criterios de calificación en alguna clase, estructúralos aquí indicando la fuente. Si no hay información, indicar "No se mencionaron criterios específicos")
+
+## Fechas mencionadas
+(Fechas de entrega, presentación, etc. encontradas en cualquier clase. Si no hay, indicar "No se mencionaron fechas específicas")
+
+## Material necesario
+(Herramientas, software, libros, etc. mencionados en cualquier clase)
+
+## Notas del profesor
+(Comentarios adicionales, consejos, advertencias o aclaraciones del profesor sobre esta actividad, con la clase de origen)
+
+## Fuentes de información
+(Tabla o lista que indique exactamente de qué clase y sección —transcripción, slides, resumen— se extrajo cada pieza de información relevante)
+
+INSTRUCCIONES:
+- Extrae SOLO información que realmente aparezca en el contenido proporcionado.
+- SIEMPRE indica de qué clase proviene cada dato (entre paréntesis o en la sección de fuentes).
+- Si una sección no tiene información en ninguna clase, escribe "No se encontró información sobre este punto en el material disponible."
+- Sé exhaustivo: revisa TODAS las clases y consolida la información sin repetir datos.
+- Si la misma información aparece en varias clases, consolídala e indica todas las fuentes.
+- Conserva citas textuales relevantes del profesor entre comillas con la clase de origen.
+- El documento debe ser útil para que el estudiante complete la actividad sin revisar las grabaciones."""
+
+        try:
+            gemini_rate_limiter.acquire()
+            response = self.model.generate_content(prompt)
+            result = response.text.strip()
+            logger.info(
+                f"Actividad extraída de carpeta: '{activity_name}' "
+                f"de {folder_name} ({len(classes_content)} clases)"
+            )
+            return result
+        except Exception as e:
+            logger.error(f"Error extrayendo actividad de carpeta: {e}")
+            raise

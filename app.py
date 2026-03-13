@@ -1868,6 +1868,33 @@ def extract_activity(class_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/folder-chat/<path:folder_path>/extract_activity', methods=['POST'])
+def extract_activity_folder(folder_path):
+    """Extrae información de una actividad buscando en todas las clases de la carpeta."""
+    if not gemini_service:
+        return jsonify({"error": "Gemini API no está configurado"}), 500
+
+    classes_content = file_manager.get_folder_all_content(folder_path)
+    if not classes_content:
+        return jsonify({"error": "No se encontraron clases en esta carpeta"}), 404
+
+    data = request.get_json(silent=True) or {}
+    activity_name = data.get('activity_name', '').strip()
+    if not activity_name:
+        return jsonify({"error": "Debe proporcionar el nombre de la actividad"}), 400
+
+    folder_name = folder_path.split("/")[-1].replace("_", " ")
+
+    try:
+        result = gemini_service.extract_activity_from_folder(
+            classes_content, folder_name, activity_name
+        )
+        return jsonify({"activity": result})
+    except Exception as e:
+        logger.error(f"Error extrayendo actividad de carpeta: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 # ============== MANEJO DE ERRORES ==============
 
 @app.errorhandler(413)
