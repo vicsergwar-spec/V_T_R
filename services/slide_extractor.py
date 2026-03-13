@@ -24,6 +24,8 @@ from statistics import stdev
 
 from PIL import Image
 
+from services.rate_limiter import gemini_rate_limiter
+
 logger = logging.getLogger(__name__)
 
 # ─── Parámetros de detección de escenas ─────────────────────────────────────
@@ -234,6 +236,7 @@ class SlideExtractor:
         """Llama a Gemini Vision con reintentos exponenciales (2s, 4s, 8s, 16s, 32s)."""
         for attempt in range(max_retries):
             try:
+                gemini_rate_limiter.acquire()
                 response = self._gemini_model.generate_content(content_parts)
                 return response.text.strip()
             except Exception as e:

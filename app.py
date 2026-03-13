@@ -21,26 +21,24 @@ import config
 from services import AudioExtractor, Transcriber, GeminiService, FileManager, SlideExtractor
 from services.toon_encoder import dumps as toon_dumps
 
-# Configurar logging (consola + archivo rotado por día)
+# Configurar logging (consola + archivo rotado por tamaño)
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s | %(levelname)-8s | %(name)s | %(message)s'
 )
 
-# Log a archivo con rotación diaria
+# Log a archivo con rotación por tamaño (5 MB, conservar 10 archivos)
 _LOGS_DIR = Path(r"D:\Documentos\V_T_R\logs")
 _LOGS_DIR.mkdir(parents=True, exist_ok=True)
-_log_filename = _LOGS_DIR / f"vtr_{datetime.now().strftime('%Y-%m-%d')}.log"
-_file_handler = logging.handlers.TimedRotatingFileHandler(
+_log_filename = _LOGS_DIR / f"vtr_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.log"
+_file_handler = logging.handlers.RotatingFileHandler(
     filename=str(_log_filename),
-    when="midnight",
-    interval=1,
-    backupCount=30,      # conservar 30 días
+    maxBytes=5 * 1024 * 1024,   # 5 MB
+    backupCount=10,
     encoding="utf-8",
 )
-_file_handler.suffix = "%Y-%m-%d"
 _file_handler.setLevel(logging.INFO)
-_file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+_file_handler.setFormatter(logging.Formatter('%(asctime)s | %(levelname)-8s | %(name)s | %(message)s'))
 logging.getLogger().addHandler(_file_handler)
 
 logger = logging.getLogger(__name__)

@@ -9,6 +9,7 @@ from google.generativeai.protos import (
     Tool as _ProtoTool,
     GoogleSearchRetrieval as _GoogleSearchRetrieval,
 )
+from services.rate_limiter import gemini_rate_limiter
 from services.toon_encoder import dumps as toon_dumps
 
 logger = logging.getLogger(__name__)
@@ -110,6 +111,7 @@ TEXTO DE LA CLASE:
 Responde SOLO con el nombre de la carpeta, sin explicaciones ni comillas."""
 
         try:
+            gemini_rate_limiter.acquire()
             response = self.model.generate_content(prompt)
             folder_name = response.text.strip()
 
@@ -234,6 +236,7 @@ INSTRUCCIONES ADICIONALES:
 - Si hay fórmulas o conceptos técnicos, explícalos brevemente
 - El resumen debe ser útil para estudiar antes de un examen"""
 
+        gemini_rate_limiter.acquire()
         response = self.model.generate_content(prompt)
         return response.text.strip()
 
@@ -253,6 +256,7 @@ Resume este fragmento extrayendo:
 
 Sé conciso pero no omitas información académica relevante. Usa viñetas."""
 
+        gemini_rate_limiter.acquire()
         response = self.model.generate_content(prompt)
         return response.text.strip()
 
@@ -288,6 +292,7 @@ INSTRUCCIONES ADICIONALES:
 - Destaca términos técnicos importantes con **negritas**
 - El resumen debe ser útil para estudiar antes de un examen"""
 
+        gemini_rate_limiter.acquire()
         response = self.model.generate_content(prompt)
         return response.text.strip()
 
@@ -422,6 +427,7 @@ NOMBRE DE LA CLASE: {readable_name}
 Responde SOLO con el documento Markdown (incluyendo el frontmatter YAML), sin explicaciones adicionales."""
 
         try:
+            gemini_rate_limiter.acquire()
             response = self.model.generate_content(prompt)
             document = response.text.strip()
             # Filtro post-generación: eliminar líneas basura flotantes
@@ -841,6 +847,7 @@ INSTRUCCIONES:
         if inline_images:
             all_images.extend(inline_images)
 
+        gemini_rate_limiter.acquire()
         if all_images:
             message_parts = [enriched_message]
             for img in all_images:
