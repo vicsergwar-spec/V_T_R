@@ -3,58 +3,38 @@ Servicio de extracción de contenido de slides en videos.
 
 Flujo:
   1. ffmpeg detecta cambios de escena y extrae un frame por slide
+     - Umbral bajo (0.15) + fallback cada 30s garantizan cobertura mínima
   2. Filtros de eficiencia (sin llamadas API):
        a) Frame en blanco → descartado (sin coste)
        b) Frame duplicado del anterior → descartado (sin coste)
-  3. Google Cloud Vision API (DOCUMENT_TEXT_DETECTION) extrae el texto
-       - Los bloques de botones/UI de la interfaz son filtrados
-  4. Si hay regiones sin texto (>13% del alto) → Gemini Vision describe el diagrama
+  3. Recorte automático de bordes negros/blancos con OpenCV
+  4. Gemini Vision analiza cada frame:
+       - Extrae todo el texto visible
+       - Describe diagramas o figuras si los hay
+       - Descarta frames con solo rostro humano (respuesta SKIP)
   5. Devuelve lista estructurada de slides para enriquecer el resumen y el chat
 """
 
-import base64
 import logging
 import os
-import re
 import subprocess
 import time
 from pathlib import Path
 from statistics import stdev
-from typing import Optional
 
-import requests
-from PIL import Image, ImageStat
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
 # ─── Parámetros de detección de escenas ─────────────────────────────────────
-SCENE_THRESHOLD = 0.35      # Sensibilidad (0-1, menor = más sensible)
-MAX_SLIDES = 60             # Máximo de slides a procesar por video
+SCENE_THRESHOLD = 0.15      # Sensibilidad (0-1, menor = más sensible)
+MIN_FRAME_INTERVAL_S = 30   # Garantizar al menos 1 frame cada 30s
+MAX_SLIDES = 80             # Máximo de slides a procesar por video
 MAX_FRAME_WIDTH = 1280      # Reducir frames grandes para ahorrar ancho de banda
 
 # ─── Eficiencia: blancos y duplicados ────────────────────────────────────────
 BLANK_STD_THRESHOLD = 12    # Desviación estándar < 12 → frame en blanco
 PHASH_DIFF_THRESHOLD = 8    # Bits distintos ≤ 8 → frame duplicado del anterior
-
-# ─── Detección de diagramas ──────────────────────────────────────────────────
-VISUAL_GAP_RATIO = 0.13     # Gap > 13% del alto → probable diagrama
-MIN_GAP_PIXELS = 80
-
-# ─── Filtro de botones / UI ──────────────────────────────────────────────────
-# Texto corto común en controles de reproductor, barra de navegación, etc.
-_UI_TEXT_RE = re.compile(
-    r"^(skip\s*(intro|ad)?|next|prev(ious)?|back|play|pause|stop|resume|replay|"
-    r"forward|rewind|mute|unmute|fullscreen|settings|subtitles?|captions?|"
-    r"close|cancel|ok|yes|no|submit|send|upload|download|share|like|"
-    r"subscribe|follow|login|logout|sign\s*in|sign\s*up|menu|home|search|"
-    r"more|less|show|hide|view|exit|continue|start|begin|end|"
-    r"►|▶|◀|⏸|⏹|⏺|⏭|⏮|\d+:\d+(:\d+)?|\d+%|cc)$",
-    re.IGNORECASE,
-)
-# Fracción del alto de la imagen que se considera "zona de controles del reproductor"
-UI_BOTTOM_ZONE = 0.10       # 10% inferior → zona de controles del video
-UI_TOP_ZONE = 0.06          # 6% superior → barra de título del reproductor
-UI_MAX_BLOCK_CHARS = 30     # Bloques muy cortos en zonas extremas = UI
 
 # ─────────────────────────────────────────────────────────────────────────────
 _SUBPROCESS_FLAGS = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
@@ -62,36 +42,25 @@ _SUBPROCESS_FLAGS = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 class SlideExtractor:
     """
-    Extrae y analiza slides de un video de clase de forma eficiente.
+    Extrae y analiza slides de un video de clase.
 
-    Estrategia de coste:
-      - Pillow (local, gratis): blancos y duplicados
-      - Cloud Vision API (de pago): solo frames únicos con contenido
-      - Gemini Vision (de pago): solo cuando se detectan diagramas
+    Estrategia:
+      - Pillow (local, gratis): filtro de blancos y duplicados
+      - Gemini Vision: OCR + descripción visual + filtro de rostros
     """
 
     def __init__(
         self,
-        vision_api_key: str,
-        gemini_api_key: Optional[str] = None,
-        gemini_model: str = "gemini-2.0-flash-lite",
+        gemini_api_key: str,
+        gemini_model: str = "gemini-2.5-flash",
     ):
-        if not vision_api_key:
-            raise ValueError("Se requiere GOOGLE_VISION_API_KEY para SlideExtractor")
+        if not gemini_api_key:
+            raise ValueError("Se requiere GEMINI_API_KEY para SlideExtractor")
 
-        self.vision_api_key = vision_api_key
-        self._gemini_model = None
-
-        if gemini_api_key:
-            try:
-                import google.generativeai as genai
-                genai.configure(api_key=gemini_api_key)
-                self._gemini_model = genai.GenerativeModel(gemini_model)
-                logger.info("SlideExtractor: Gemini Vision disponible para diagramas")
-            except Exception as e:
-                logger.warning(f"SlideExtractor: Gemini Vision no disponible: {e}")
-
-        logger.info("SlideExtractor inicializado (Cloud Vision + filtros locales)")
+        import google.generativeai as genai
+        genai.configure(api_key=gemini_api_key)
+        self._gemini_model = genai.GenerativeModel(gemini_model)
+        logger.info(f"SlideExtractor inicializado (Gemini Vision: {gemini_model})")
 
     # ─────────────────────────────────────────────────────────────────────────
     # API pública
@@ -112,7 +81,6 @@ class SlideExtractor:
             temp_dir: Directorio temporal para frames
             progress_callback: Callback(current, total, msg)
             persist_dir: Si se indica, guarda las imágenes en esta carpeta
-                         (típicamente la carpeta de la clase)
 
         Returns:
             Lista de dicts:
@@ -134,12 +102,17 @@ class SlideExtractor:
             logger.warning("No se detectaron cambios de escena significativos")
             return []
 
+        logger.info(f"[I] Frames capturados por ffmpeg: {len(frame_pairs)}")
+
         # ── Filtros locales sin coste de API ──────────────────────────────
         frame_pairs = self._filter_blank_and_duplicates(frame_pairs)
-        logger.info(f"{len(frame_pairs)} slides después de filtrar blancos/duplicados")
+        logger.info(f"[I] {len(frame_pairs)} slides después de filtrar blancos/duplicados")
 
         if not frame_pairs:
             return []
+
+        # ── Recortar bordes negros/blancos con OpenCV ─────────────────────
+        frame_pairs = self._autocrop_frames(frame_pairs)
 
         # Preparar directorio de imágenes persistentes
         images_dir = None
@@ -149,6 +122,7 @@ class SlideExtractor:
 
         slides = []
         total = len(frame_pairs)
+        skipped = 0
 
         for i, (frame_path, timestamp) in enumerate(frame_pairs, start=1):
             if progress_callback:
@@ -156,16 +130,22 @@ class SlideExtractor:
             try:
                 slide = self._analyze_frame(frame_path, i, timestamp)
 
+                # Gemini respondió SKIP → frame con solo rostro, descartar
+                if slide is None:
+                    skipped += 1
+                    logger.debug(f"Frame {i} descartado: solo rostro (SKIP)")
+                    continue
+
                 # Persistir imagen en carpeta de la clase
                 image_filename = ""
                 if images_dir:
-                    import shutil
-                    dest_name = f"slide_{i:03d}.jpg"
+                    dest_name = f"slide_{i:03d}.png"
                     dest_path = images_dir / dest_name
-                    shutil.copy2(frame_path, dest_path)
+                    with Image.open(frame_path) as img:
+                        img.save(str(dest_path), "PNG", compress_level=1)
                     image_filename = f"slide_images/{dest_name}"
 
-                    # Recursividad: detectar sub-imágenes dentro del frame
+                    # Detectar sub-imágenes dentro del frame
                     sub_images = self._extract_sub_images(frame_path, i, images_dir)
                     if sub_images:
                         slide["sub_images"] = sub_images
@@ -185,6 +165,9 @@ class SlideExtractor:
                          text="", visual_description="", has_visual=False,
                          image_file="")
                 )
+
+        logger.info(f"[I] Frames descartados (solo rostro / SKIP): {skipped}")
+        logger.info(f"[I] Slides finales con contenido: {len(slides)}")
 
         self._cleanup_frames(frames_dir)
         return slides
@@ -206,7 +189,6 @@ class SlideExtractor:
                 lines.append(slide["text"])
             if slide.get("visual_description"):
                 lines.append(f"\n*[Elemento visual: {slide['visual_description']}]*")
-            # Sub-imágenes: solo su descripción textual para IA
             for sub in slide.get("sub_images", []):
                 if sub.get("description"):
                     lines.append(f"\n*[Sub-imagen: {sub['description']}]*")
@@ -229,14 +211,12 @@ class SlideExtractor:
         for slide in useful:
             mm, ss = divmod(int(slide.get("timestamp", 0)), 60)
             section_lines = [f"## Slide {slide['frame_num']} [{mm:02d}:{ss:02d}]"]
-            # Referencia a imagen del slide (para PDF y presentación)
             if slide.get("image_file"):
                 section_lines.append(f"![Slide {slide['frame_num']}]({slide['image_file']})")
             if slide.get("text"):
                 section_lines.append(slide["text"])
             if slide.get("visual_description"):
                 section_lines.append(f"> {slide['visual_description']}")
-            # Sub-imágenes con referencia visual
             for sub in slide.get("sub_images", []):
                 if sub.get("file"):
                     section_lines.append(f"![Sub-imagen]({sub['file']})")
@@ -245,6 +225,80 @@ class SlideExtractor:
             parts.append("\n".join(section_lines))
 
         return "\n---\n".join(parts)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Gemini Vision con reintentos
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _call_gemini_with_retry(self, content_parts: list, max_retries: int = 5) -> str:
+        """Llama a Gemini Vision con reintentos exponenciales (2s, 4s, 8s, 16s, 32s)."""
+        for attempt in range(max_retries):
+            try:
+                response = self._gemini_model.generate_content(content_parts)
+                return response.text.strip()
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    raise
+                wait = 2 ** (attempt + 1)
+                logger.warning(f"Gemini Vision reintento {attempt+1}/{max_retries} en {wait}s: {e}")
+                time.sleep(wait)
+        return ""
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Análisis individual de un frame (Gemini Vision unificado)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _analyze_frame(self, frame_path: str, frame_num: int, timestamp: float) -> dict | None:
+        """
+        Envía el frame a Gemini Vision para extraer texto y detectar elementos
+        visuales. Si la respuesta es SKIP, retorna None (frame sin contenido).
+        """
+        prompt = (
+            "Analiza esta imagen de un video de clase universitaria.\n\n"
+            "1. Extrae TODO el texto visible en la imagen, preservando la estructura "
+            "(títulos, viñetas, párrafos, tablas, fórmulas).\n"
+            "2. Si contiene diagramas, gráficas, esquemas, figuras o fórmulas, "
+            "descríbelos brevemente después del texto, en una línea que empiece con "
+            "'> VISUAL: '.\n"
+            "3. Ignora completamente botones de interfaz, controles del reproductor, "
+            "barras de navegación, watermarks y elementos de UI del campus virtual.\n"
+            "4. Si la imagen muestra SOLO un rostro humano (profesor/presentador) "
+            "sin texto, diagramas ni contenido académico visible, responde "
+            "exactamente: SKIP\n\n"
+            "Responde SOLO con el contenido extraído (texto + descripción visual si aplica) "
+            "o SKIP. Sin explicaciones adicionales."
+        )
+
+        with Image.open(frame_path) as img:
+            answer = self._call_gemini_with_retry([prompt, img.copy()])
+
+        # Frame con solo rostro → descartar
+        if answer.strip().upper() == "SKIP":
+            return None
+
+        # Separar texto de descripción visual
+        text_lines = []
+        visual_lines = []
+        for line in answer.split("\n"):
+            stripped = line.strip()
+            if stripped.lower().startswith("> visual:"):
+                visual_lines.append(stripped[len("> visual:"):].strip())
+            elif stripped.startswith("> VISUAL:"):
+                visual_lines.append(stripped[len("> VISUAL:"):].strip())
+            else:
+                text_lines.append(line)
+
+        text = "\n".join(text_lines).strip()
+        visual_description = " ".join(visual_lines).strip()
+        has_visual = bool(visual_description)
+
+        return dict(
+            frame_num=frame_num,
+            timestamp=timestamp,
+            text=text,
+            visual_description=visual_description,
+            has_visual=has_visual,
+        )
 
     # ─────────────────────────────────────────────────────────────────────────
     # Filtros locales (sin coste de API)
@@ -262,13 +316,11 @@ class SlideExtractor:
         blanks = dupes = 0
 
         for frame_path, timestamp in frame_pairs:
-            # 1. Detectar blancos
             if self._is_blank(frame_path):
                 blanks += 1
                 logger.debug(f"Frame en blanco descartado: {frame_path}")
                 continue
 
-            # 2. Detectar duplicados vs frame anterior
             h = self._phash(frame_path)
             if prev_hash is not None and self._hash_distance(h, prev_hash) <= PHASH_DIFF_THRESHOLD:
                 dupes += 1
@@ -279,7 +331,7 @@ class SlideExtractor:
             kept.append((frame_path, timestamp))
 
         if blanks or dupes:
-            logger.info(f"Filtros locales: {blanks} blancos + {dupes} duplicados descartados")
+            logger.info(f"[I] Filtros locales: {blanks} blancos + {dupes} duplicados descartados")
         return kept
 
     def _is_blank(self, image_path: str) -> bool:
@@ -309,14 +361,83 @@ class SlideExtractor:
         return bin(a ^ b).count("1")
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Recorte automático de bordes negros/blancos
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _autocrop_frames(
+        self, frame_pairs: list[tuple[str, float]]
+    ) -> list[tuple[str, float]]:
+        """
+        Recorta bordes negros/blancos de cada frame usando OpenCV.
+        Sobrescribe el archivo original con la versión recortada.
+        """
+        try:
+            import cv2
+            import numpy as np
+        except ImportError:
+            logger.warning("OpenCV no disponible, omitiendo autocrop de bordes")
+            return frame_pairs
+
+        result = []
+        for frame_path, timestamp in frame_pairs:
+            try:
+                img = cv2.imread(frame_path)
+                if img is None:
+                    result.append((frame_path, timestamp))
+                    continue
+
+                h, w = img.shape[:2]
+                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+                mask_not_black = gray > 15
+                mask_not_white = gray < 240
+                mask = (mask_not_black & mask_not_white).astype(np.uint8) * 255
+
+                if cv2.countNonZero(mask) < (h * w * 0.05):
+                    result.append((frame_path, timestamp))
+                    continue
+
+                coords = cv2.findNonZero(mask)
+                x, y, rw, rh = cv2.boundingRect(coords)
+
+                margin_x = w * 0.03
+                margin_y = h * 0.03
+                if x > margin_x or y > margin_y or (w - x - rw) > margin_x or (h - y - rh) > margin_y:
+                    pad = 2
+                    x = max(0, x - pad)
+                    y = max(0, y - pad)
+                    rw = min(w - x, rw + 2 * pad)
+                    rh = min(h - y, rh + 2 * pad)
+
+                    cropped = img[y:y+rh, x:x+rw]
+                    crop_h, crop_w = cropped.shape[:2]
+                    scale = min(w / crop_w, h / crop_h)
+                    new_w = int(crop_w * scale)
+                    new_h = int(crop_h * scale)
+                    resized = cv2.resize(cropped, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
+
+                    cv2.imwrite(frame_path, resized)
+                    logger.debug(f"Autocrop: {Path(frame_path).name} {w}x{h} → {new_w}x{new_h}")
+
+                result.append((frame_path, timestamp))
+            except Exception as e:
+                logger.warning(f"Error en autocrop de {frame_path}: {e}")
+                result.append((frame_path, timestamp))
+
+        return result
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Extracción de frames con ffmpeg
     # ─────────────────────────────────────────────────────────────────────────
 
     def _extract_keyframes(self, video_path: Path, frames_dir: Path) -> list[tuple[str, float]]:
         """
         Usa ffmpeg para extraer un frame por cada cambio de escena.
+        Garantiza al menos 1 frame cada MIN_FRAME_INTERVAL_S segundos.
         Retorna lista de (ruta_frame, timestamp_segundos).
         """
+        video_duration = self._get_video_duration(video_path)
+
         cmd_extract = [
             "ffmpeg", "-i", str(video_path),
             "-vf", (
@@ -324,40 +445,96 @@ class SlideExtractor:
                 f"scale='if(gt(iw,{MAX_FRAME_WIDTH}),{MAX_FRAME_WIDTH},-2)':-2"
             ),
             "-vsync", "vfr",
-            "-q:v", "3",
+            "-q:v", "2",
             str(frames_dir / "frame_%05d.jpg"),
             "-y",
         ]
         self._run_ffmpeg(cmd_extract, timeout=600)
 
         frame_files = sorted(frames_dir.glob("frame_*.jpg"))
+        scene_timestamps = self._get_scene_timestamps(video_path)
+
+        if video_duration > 0:
+            covered_times = set()
+            for i, ts in enumerate(scene_timestamps):
+                bucket = int(ts // MIN_FRAME_INTERVAL_S)
+                covered_times.add(bucket)
+
+            total_buckets = int(video_duration // MIN_FRAME_INTERVAL_S) + 1
+            missing_times = []
+            for b in range(total_buckets):
+                if b not in covered_times:
+                    missing_times.append(b * MIN_FRAME_INTERVAL_S)
+
+            if missing_times:
+                logger.info(f"[I] Rellenando {len(missing_times)} gaps de cobertura (cada {MIN_FRAME_INTERVAL_S}s)")
+                fill_dir = frames_dir / "fill"
+                fill_dir.mkdir(exist_ok=True)
+                for idx, ts in enumerate(missing_times):
+                    out_path = fill_dir / f"fill_{idx:05d}.jpg"
+                    cmd_fill = [
+                        "ffmpeg", "-ss", str(ts),
+                        "-i", str(video_path),
+                        "-vf", f"scale='if(gt(iw,{MAX_FRAME_WIDTH}),{MAX_FRAME_WIDTH},-2)':-2",
+                        "-frames:v", "1",
+                        "-q:v", "2",
+                        str(out_path),
+                        "-y",
+                    ]
+                    try:
+                        self._run_ffmpeg(cmd_fill, timeout=30)
+                        if out_path.exists():
+                            frame_files.append(out_path)
+                            scene_timestamps.append(ts)
+                    except Exception:
+                        pass
+
         if not frame_files:
             logger.info("Sin cambios de escena, muestreo cada 30s como fallback")
             cmd_fallback = [
                 "ffmpeg", "-i", str(video_path),
                 "-vf", (
-                    f"fps=1/30,"
+                    f"fps=1/{MIN_FRAME_INTERVAL_S},"
                     f"scale='if(gt(iw,{MAX_FRAME_WIDTH}),{MAX_FRAME_WIDTH},-2)':-2"
                 ),
-                "-q:v", "3",
+                "-q:v", "2",
                 str(frames_dir / "frame_%05d.jpg"),
                 "-y",
             ]
             self._run_ffmpeg(cmd_fallback, timeout=600)
             frame_files = sorted(frames_dir.glob("frame_*.jpg"))
+            scene_timestamps = [i * MIN_FRAME_INTERVAL_S for i in range(len(frame_files))]
 
-        timestamps = self._get_scene_timestamps(video_path)
-
-        if len(frame_files) > MAX_SLIDES:
-            step = len(frame_files) / MAX_SLIDES
-            frame_files = [frame_files[int(i * step)] for i in range(MAX_SLIDES)]
-
-        pairs = []
+        paired = []
         for i, fp in enumerate(frame_files):
-            ts = timestamps[i] if i < len(timestamps) else float(i * 30)
-            pairs.append((str(fp), ts))
+            ts = scene_timestamps[i] if i < len(scene_timestamps) else float(i * MIN_FRAME_INTERVAL_S)
+            paired.append((ts, str(fp)))
+        paired.sort(key=lambda x: x[0])
 
-        return pairs
+        if len(paired) > MAX_SLIDES:
+            step = len(paired) / MAX_SLIDES
+            paired = [paired[int(i * step)] for i in range(MAX_SLIDES)]
+
+        return [(fp, ts) for ts, fp in paired]
+
+    def _get_video_duration(self, video_path: Path) -> float:
+        """Obtiene la duración del video en segundos."""
+        cmd = [
+            "ffprobe", "-v", "quiet",
+            "-show_entries", "format=duration",
+            "-of", "csv=p=0", str(video_path),
+        ]
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True,
+                timeout=30, creationflags=_SUBPROCESS_FLAGS
+            )
+            duration_str = result.stdout.strip()
+            if duration_str and duration_str != "N/A":
+                return float(duration_str)
+        except Exception as e:
+            logger.warning(f"No se pudo obtener duración del video: {e}")
+        return 0.0
 
     def _get_scene_timestamps(self, video_path: Path) -> list[float]:
         cmd = [
@@ -392,193 +569,6 @@ class SlideExtractor:
             raise RuntimeError(f"ffmpeg error: {result.stderr[-500:]}")
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Análisis individual de un frame
-    # ─────────────────────────────────────────────────────────────────────────
-
-    def _analyze_frame(self, frame_path: str, frame_num: int, timestamp: float) -> dict:
-        """
-        1. Cloud Vision → texto (filtrando UI)
-        2. Si hay regiones sin texto → Gemini Vision describe el diagrama
-        """
-        _, img_h = self._get_image_size(frame_path)
-
-        vision_resp = self._call_vision_api(frame_path)
-        text, text_blocks = self._parse_vision_response(vision_resp, img_h)
-
-        has_visual = False
-        visual_description = ""
-
-        if self._gemini_model:
-            visual_regions = self._detect_visual_regions(text_blocks, img_h)
-            if visual_regions:
-                has_visual = True
-                visual_description = self._describe_with_gemini(frame_path, text)
-
-        return dict(
-            frame_num=frame_num,
-            timestamp=timestamp,
-            text=text.strip(),
-            visual_description=visual_description,
-            has_visual=has_visual,
-        )
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Google Cloud Vision API
-    # ─────────────────────────────────────────────────────────────────────────
-
-    def _call_vision_api(self, image_path: str, max_retries: int = 3) -> dict:
-        """Llama a Cloud Vision REST API con reintentos exponenciales."""
-        url = f"https://vision.googleapis.com/v1/images:annotate?key={self.vision_api_key}"
-
-        with open(image_path, "rb") as fh:
-            content = base64.b64encode(fh.read()).decode("utf-8")
-
-        payload = {
-            "requests": [{
-                "image": {"content": content},
-                "features": [{"type": "DOCUMENT_TEXT_DETECTION"}],
-            }]
-        }
-
-        for attempt in range(max_retries):
-            try:
-                resp = requests.post(url, json=payload, timeout=30)
-                if resp.status_code == 403:
-                    raise RuntimeError("Cloud Vision API key inválida o sin permisos (HTTP 403)")
-                if resp.status_code in (429, 500, 502, 503):
-                    wait = (2 ** attempt) * 2
-                    logger.warning(f"Vision API HTTP {resp.status_code}, reintento en {wait}s")
-                    time.sleep(wait)
-                    continue
-                resp.raise_for_status()
-                return resp.json()
-            except requests.RequestException as exc:
-                if attempt == max_retries - 1:
-                    raise RuntimeError(f"Error en Cloud Vision API: {exc}") from exc
-                time.sleep(2 ** attempt)
-
-        return {}
-
-    def _parse_vision_response(
-        self, response: dict, img_height: int = 720
-    ) -> tuple[str, list[dict]]:
-        """
-        Parsea la respuesta de Vision API filtrando bloques de UI/botones.
-        Retorna (texto_limpio, lista_de_bounding_boxes).
-        """
-        if not response or "responses" not in response:
-            return "", []
-
-        result = response["responses"][0]
-        if "error" in result:
-            logger.warning(f"Vision API error: {result['error'].get('message', '')}")
-            return "", []
-
-        annotation = result.get("fullTextAnnotation", {})
-
-        # Recopilar bloques con su texto y posición para poder filtrar UI
-        raw_blocks = []
-        for page in annotation.get("pages", []):
-            for block in page.get("blocks", []):
-                vertices = block.get("boundingBox", {}).get("vertices", [])
-                if len(vertices) < 4:
-                    continue
-                ys = [v.get("y", 0) for v in vertices]
-                xs = [v.get("x", 0) for v in vertices]
-                # Extraer texto del bloque concatenando párrafos/palabras
-                block_text = self._block_text(block)
-                raw_blocks.append(dict(
-                    y1=min(ys), y2=max(ys), x1=min(xs), x2=max(xs),
-                    text=block_text,
-                ))
-
-        # Filtrar botones / elementos de UI
-        content_blocks = [
-            b for b in raw_blocks
-            if not self._is_ui_block(b, img_height)
-        ]
-
-        text_blocks = [
-            dict(y1=b["y1"], y2=b["y2"], x1=b["x1"], x2=b["x2"])
-            for b in content_blocks
-        ]
-        clean_text = "\n".join(b["text"] for b in content_blocks if b["text"]).strip()
-
-        return clean_text, text_blocks
-
-    @staticmethod
-    def _block_text(block: dict) -> str:
-        """Extrae el texto concatenado de un bloque de Vision API."""
-        parts = []
-        for para in block.get("paragraphs", []):
-            for word in para.get("words", []):
-                word_str = "".join(
-                    s.get("text", "") for s in word.get("symbols", [])
-                )
-                parts.append(word_str)
-        return " ".join(parts)
-
-    def _is_ui_block(self, block: dict, img_height: int) -> bool:
-        """
-        Determina si un bloque de texto es un elemento de interfaz de usuario
-        (botón, control del reproductor, barra de navegación, watermark, etc.)
-        """
-        text = block["text"].strip()
-        y1 = block["y1"]
-        y2 = block["y2"]
-
-        if not text:
-            return True  # bloque vacío
-
-        # Zona inferior (controles del reproductor de video)
-        if y1 > img_height * (1 - UI_BOTTOM_ZONE):
-            return True
-
-        # Zona superior (barra de título del reproductor)
-        if y2 < img_height * UI_TOP_ZONE:
-            return True
-
-        # Texto muy corto en zonas extremas = botón / icono
-        if len(text) <= UI_MAX_BLOCK_CHARS:
-            in_edge = (y1 < img_height * 0.08) or (y1 > img_height * 0.88)
-            if in_edge and _UI_TEXT_RE.match(text):
-                return True
-
-        return False
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Detección de regiones visuales (diagramas)
-    # ─────────────────────────────────────────────────────────────────────────
-
-    def _get_image_size(self, image_path: str) -> tuple[int, int]:
-        try:
-            with Image.open(image_path) as img:
-                return img.size  # (width, height)
-        except Exception:
-            return 1280, 720
-
-    def _detect_visual_regions(self, text_blocks: list[dict], img_height: int) -> list[dict]:
-        """Detecta huecos grandes entre bloques de texto → posibles diagramas."""
-        if not text_blocks:
-            return []
-
-        sorted_blocks = sorted(text_blocks, key=lambda b: b["y1"])
-        visual_regions = []
-        prev_bottom = 0
-
-        for block in sorted_blocks:
-            gap = block["y1"] - prev_bottom
-            if gap > img_height * VISUAL_GAP_RATIO and gap > MIN_GAP_PIXELS:
-                visual_regions.append(dict(y1=prev_bottom, y2=block["y1"]))
-            prev_bottom = max(prev_bottom, block["y2"])
-
-        final_gap = img_height - prev_bottom
-        if final_gap > img_height * VISUAL_GAP_RATIO and final_gap > MIN_GAP_PIXELS:
-            visual_regions.append(dict(y1=prev_bottom, y2=img_height))
-
-        return visual_regions
-
-    # ─────────────────────────────────────────────────────────────────────────
     # Detección y extracción de sub-imágenes dentro de un frame
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -589,22 +579,16 @@ class SlideExtractor:
         Detecta sub-imágenes (fotos, diagramas incrustados) dentro de un frame
         usando detección de contornos con diferencia de color respecto al fondo.
         Guarda cada sub-imagen como archivo independiente.
-
-        Returns:
-            Lista de dicts: {file, description}
         """
         try:
             with Image.open(frame_path) as img:
                 w, h = img.size
-                # Mínimo de tamaño para considerar una sub-imagen
-                min_area = (w * h) * 0.02     # al menos 2% del frame
-                max_area = (w * h) * 0.85     # no más del 85% (sería el frame completo)
-                min_dim = 60                  # mínimo 60px de lado
+                min_area = (w * h) * 0.02
+                max_area = (w * h) * 0.85
+                min_dim = 60
 
                 gray = img.convert("L")
-                pixels = list(gray.getdata())
 
-                # Detectar el color de fondo dominante (moda de los bordes)
                 border_pixels = []
                 for x in range(w):
                     border_pixels.append(gray.getpixel((x, 0)))
@@ -616,7 +600,6 @@ class SlideExtractor:
                 from collections import Counter
                 bg_val = Counter(border_pixels).most_common(1)[0][0]
 
-                # Crear máscara binaria: píxeles muy diferentes al fondo
                 threshold = 40
                 mask = Image.new("L", (w, h), 0)
                 mask_pixels = mask.load()
@@ -626,12 +609,10 @@ class SlideExtractor:
                         if abs(gray_pixels[x, y] - bg_val) > threshold:
                             mask_pixels[x, y] = 255
 
-                # Encontrar bounding boxes de regiones conectadas (flood-fill simple)
                 visited = set()
                 regions = []
 
                 def _flood_fill(sx, sy):
-                    """BFS simple para encontrar región conectada."""
                     stack = [(sx, sy)]
                     x_min, x_max, y_min, y_max = sx, sx, sy, sy
                     count = 0
@@ -649,14 +630,12 @@ class SlideExtractor:
                         x_max = max(x_max, cx)
                         y_min = min(y_min, cy)
                         y_max = max(y_max, cy)
-                        # Solo 4-vecinos, con paso de 2 para velocidad
                         for dx, dy in [(-2, 0), (2, 0), (0, -2), (0, 2)]:
                             nx, ny = cx + dx, cy + dy
                             if 0 <= nx < w and 0 <= ny < h and (nx, ny) not in visited:
                                 stack.append((nx, ny))
                     return x_min, y_min, x_max, y_max, count
 
-                # Escanear con paso grueso para encontrar regiones
                 step = max(4, min(w, h) // 100)
                 for sy in range(0, h, step):
                     for sx in range(0, w, step):
@@ -670,8 +649,7 @@ class SlideExtractor:
                             continue
                         if rw < min_dim or rh < min_dim:
                             continue
-                        # Verificar densidad: la región debe tener suficientes píxeles
-                        density = cnt / max(area / 4, 1)  # ajustado por paso de 2
+                        density = cnt / max(area / 4, 1)
                         if density < 0.05:
                             continue
                         regions.append((x1, y1, x2, y2))
@@ -679,12 +657,10 @@ class SlideExtractor:
                 if not regions:
                     return []
 
-                # Fusionar regiones superpuestas
                 regions = self._merge_overlapping_regions(regions)
 
                 sub_images = []
-                for idx, (x1, y1, x2, y2) in enumerate(regions[:5]):  # máximo 5 sub-imágenes
-                    # Expandir un poco el recorte
+                for idx, (x1, y1, x2, y2) in enumerate(regions[:5]):
                     pad = 4
                     x1 = max(0, x1 - pad)
                     y1 = max(0, y1 - pad)
@@ -692,14 +668,12 @@ class SlideExtractor:
                     y2 = min(h, y2 + pad)
 
                     cropped = img.crop((x1, y1, x2, y2))
-                    sub_name = f"slide_{slide_num:03d}_sub_{idx + 1}.jpg"
+                    sub_name = f"slide_{slide_num:03d}_sub_{idx + 1}.png"
                     sub_path = images_dir / sub_name
-                    cropped.save(str(sub_path), "JPEG", quality=85)
+                    cropped.save(str(sub_path), "PNG", compress_level=1)
 
-                    # Describir con Gemini si está disponible
-                    description = ""
-                    if self._gemini_model:
-                        description = self._describe_with_gemini(str(sub_path), "")
+                    # Describir sub-imagen con Gemini
+                    description = self._describe_sub_image(str(sub_path))
 
                     sub_images.append({
                         "file": f"slide_images/{sub_name}",
@@ -711,6 +685,24 @@ class SlideExtractor:
         except Exception as e:
             logger.warning(f"Error extrayendo sub-imágenes del slide {slide_num}: {e}")
             return []
+
+    def _describe_sub_image(self, image_path: str) -> str:
+        """Usa Gemini Vision para describir una sub-imagen extraída."""
+        try:
+            with Image.open(image_path) as img:
+                prompt = (
+                    "Describe brevemente el contenido académico de esta imagen "
+                    "(diagrama, gráfica, fórmula, esquema, etc.). "
+                    "Si no hay contenido académico, responde: Sin contenido. "
+                    "Máximo 80 palabras."
+                )
+                description = self._call_gemini_with_retry([prompt, img.copy()])
+            if "Sin contenido" in description:
+                return ""
+            return description
+        except Exception as e:
+            logger.warning(f"Error describiendo sub-imagen: {e}")
+            return ""
 
     @staticmethod
     def _merge_overlapping_regions(regions: list[tuple]) -> list[tuple]:
@@ -731,7 +723,6 @@ class SlideExtractor:
                     if j in used:
                         continue
                     ax1, ay1, ax2, ay2 = merged[j]
-                    # Verificar solapamiento
                     if x1 <= ax2 and x2 >= ax1 and y1 <= ay2 and y2 >= ay1:
                         x1 = min(x1, ax1)
                         y1 = min(y1, ay1)
@@ -745,43 +736,16 @@ class SlideExtractor:
         return merged
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Gemini Vision para diagramas
-    # ─────────────────────────────────────────────────────────────────────────
-
-    def _describe_with_gemini(self, image_path: str, existing_text: str) -> str:
-        """Usa Gemini Vision para describir el contenido visual del slide."""
-        try:
-            with Image.open(image_path) as img:
-                text_ctx = (
-                    f"El texto visible en el slide es: «{existing_text[:400].strip()}»"
-                    if existing_text.strip()
-                    else "El slide no contiene texto significativo."
-                )
-                prompt = (
-                    f"Analiza este slide de una clase universitaria.\n{text_ctx}\n\n"
-                    "Describe ÚNICAMENTE los elementos visuales no textuales: "
-                    "diagramas, gráficas, fórmulas matemáticas, tablas, esquemas, figuras. "
-                    "Ignora botones de interfaz, controles del reproductor y elementos de navegación. "
-                    "Si no hay elementos visuales académicos, responde exactamente: Sin elementos visuales.\n"
-                    "Sé conciso y técnico. Máximo 120 palabras."
-                )
-                response = self._gemini_model.generate_content([prompt, img.copy()])
-            description = response.text.strip()
-            if "Sin elementos visuales" in description:
-                return ""
-            return description
-        except Exception as e:
-            logger.warning(f"Gemini Vision no pudo describir el slide: {e}")
-            return ""
-
-    # ─────────────────────────────────────────────────────────────────────────
     # Limpieza
     # ─────────────────────────────────────────────────────────────────────────
 
     def _cleanup_frames(self, frames_dir: Path) -> None:
         try:
-            for fp in frames_dir.glob("frame_*.jpg"):
+            for fp in frames_dir.rglob("*.jpg"):
                 fp.unlink(missing_ok=True)
+            fill_dir = frames_dir / "fill"
+            if fill_dir.exists():
+                fill_dir.rmdir()
             frames_dir.rmdir()
         except Exception as e:
             logger.warning(f"No se pudo limpiar frames temporales: {e}")

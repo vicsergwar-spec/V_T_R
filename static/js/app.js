@@ -18,7 +18,9 @@ const state = {
     isProcessing: false,
     openaiConfigured: false,
     cancelRequested: false,
-    abortController: null
+    abortController: null,
+    pendingChatImages: [],       // [{dataUrl, base64, mime_type}]
+    pendingFolderChatImages: [], // [{dataUrl, base64, mime_type}]
 };
 
 // ============================================
@@ -68,6 +70,7 @@ const elements = {
     transcriptionContent: document.getElementById('transcriptionContent'),
     transcriptionCount: document.getElementById('transcriptionCount'),
     downloadTranscriptionBtn: document.getElementById('downloadTranscriptionBtn'),
+    downloadToonBtn: document.getElementById('downloadToonBtn'),
     slidesBtnTab: document.getElementById('tab-btn-slides'),
     slidesContent: document.getElementById('slidesContent'),
     slidesCount: document.getElementById('slidesCount'),
@@ -87,6 +90,7 @@ const elements = {
     // Chat de clase
     chatMessages: document.getElementById('chatMessages'),
     chatInput: document.getElementById('chatInput'),
+    chatImagePreview: document.getElementById('chatImagePreview'),
     sendChatBtn: document.getElementById('sendChatBtn'),
     clearChatBtn: document.getElementById('clearChatBtn'),
 
@@ -105,6 +109,14 @@ const elements = {
     rubricaFileInput: document.getElementById('rubricaFileInput'),
     saveRubricaBtn: document.getElementById('saveRubricaBtn'),
 
+    // Global extra knowledge panels
+    globalKnowledgeToggleClassChat: document.getElementById('globalKnowledgeToggleClassChat'),
+    globalKnowledgePanelClassChat: document.getElementById('globalKnowledgePanelClassChat'),
+    globalKnowledgeFilesClassChat: document.getElementById('globalKnowledgeFilesClassChat'),
+    globalKnowledgeToggleFolderChat: document.getElementById('globalKnowledgeToggleFolderChat'),
+    globalKnowledgePanelFolderChat: document.getElementById('globalKnowledgePanelFolderChat'),
+    globalKnowledgeFilesFolderChat: document.getElementById('globalKnowledgeFilesFolderChat'),
+
     // Images panel (class chat)
     imagesToggle: document.getElementById('imagesToggle'),
     imagesPanel: document.getElementById('imagesPanel'),
@@ -119,6 +131,7 @@ const elements = {
     folderChatClassesBadge: document.getElementById('folderChatClassesBadge'),
     folderChatMessages: document.getElementById('folderChatMessages'),
     folderChatInput: document.getElementById('folderChatInput'),
+    folderChatImagePreview: document.getElementById('folderChatImagePreview'),
     sendFolderChatBtn: document.getElementById('sendFolderChatBtn'),
     clearFolderChatBtn: document.getElementById('clearFolderChatBtn'),
 
@@ -146,6 +159,13 @@ const elements = {
     modalMessage: document.getElementById('modalMessage'),
     modalCancel: document.getElementById('modalCancel'),
     modalConfirm: document.getElementById('modalConfirm'),
+
+    // Modal asignación de carpetas
+    assignModal: document.getElementById('assignModal'),
+    assignList: document.getElementById('assignList'),
+    assignCancelBtn: document.getElementById('assignCancelBtn'),
+    assignConfirmBtn: document.getElementById('assignConfirmBtn'),
+    assignRememberCheck: document.getElementById('assignRememberCheck'),
 
     // Modal renombrar
     renameModal: document.getElementById('renameModal'),
@@ -185,6 +205,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initFolderChat();
     initModal();
     initRenameModal();
+    initAssignModal();
     initLogs();
     initCancelStop();
     initPanels();
@@ -436,14 +457,21 @@ function initUpload() {
 // ── Cola ──────────────────────────────────────
 
 function addFilesToQueue(files) {
+    const newFiles = [];
     for (const f of [...files]) {
         if (!f.type.startsWith('video/')) continue;
-        // si había un error previo con ese nombre en el historial, quitarlo
         removeFromFailedHistory(f.name);
-        // evitar duplicados con mismo nombre en estado pendiente
         if (state.queue.find(q => q.file.name === f.name && q.status === 'pending')) continue;
-        state.queue.push({ file: f, status: 'pending', error: '', isGpuError: false });
+        const item = { file: f, status: 'pending', error: '', isGpuError: false, folderPath: elements.folderSelect.value };
+        state.queue.push(item);
+        newFiles.push(item);
     }
+
+    // Si se agregan 2+ archivos a la vez, abrir modal de asignación de carpetas
+    if (newFiles.length >= 2) {
+        showAssignModal(newFiles);
+    }
+
     renderQueue();
     updateProcessBtn();
 }
@@ -492,7 +520,7 @@ function renderQueue() {
             <div class="queue-item-icon">${icons[item.status]}</div>
             <div class="queue-item-info">
                 <div class="queue-item-name">${item.file.name}</div>
-                <div class="queue-item-meta">${formatFileSize(item.file.size)} · <span class="status-${item.status}">${label}</span></div>
+                <div class="queue-item-meta">${formatFileSize(item.file.size)}${item.folderPath ? `<span class="queue-item-folder"> · ${escapeHtml(item.folderPath)}</span>` : ''} · <span class="status-${item.status}">${label}</span></div>
             </div>
             ${actions}`;
         list.appendChild(div);
@@ -619,9 +647,9 @@ async function processQueue() {
         }
     }
 
-    if (elements.shutdownCheckbox.checked) {
-        updateProgress(100, 'Apagando el equipo...');
-        await fetch('/api/shutdown', { method: 'POST' }).catch(() => {});
+    if (elements.shutdownCheckbox.checked && doneCount > 0) {
+        updateProgress(100, 'Apagando el equipo en 60 segundos...');
+        await fetch('/api/shutdown-delayed', { method: 'POST' }).catch(() => {});
     }
 }
 
@@ -629,7 +657,7 @@ async function processOneVideo(item, currentNum, totalNum) {
     const formData = new FormData();
     formData.append('video', item.file);
     formData.append('model', elements.modelSelect.value);
-    formData.append('folder_path', elements.folderSelect.value);
+    formData.append('folder_path', item.folderPath ?? elements.folderSelect.value);
 
     state.abortController = new AbortController();
     const startTime = Date.now();
@@ -1051,6 +1079,9 @@ function initDetail() {
 
     // Botón descargar transcripción
     elements.downloadTranscriptionBtn.addEventListener('click', downloadTranscription);
+
+    // Botón descargar TOON
+    elements.downloadToonBtn.addEventListener('click', downloadToon);
 
     // Botones descargar slides
     elements.downloadSlidesMdBtn.addEventListener('click',  () => downloadSlides('markdown'));
@@ -1558,9 +1589,67 @@ function downloadTranscription() {
     URL.revokeObjectURL(url);
 }
 
+function downloadToon() {
+    if (!state.currentClass) return;
+    const classId = state.currentClass.id;
+    const a = document.createElement('a');
+    a.href = `/api/classes/${encodeURIComponent(classId)}/toon/download`;
+    a.download = `${classId}.toon`;
+    a.click();
+}
+
 // ============================================
 // Chat
 // ============================================
+
+function _handlePasteImage(e, pendingKey, previewEl) {
+    const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+    for (const item of items) {
+        if (item.type.startsWith('image/')) {
+            e.preventDefault();
+            const blob = item.getAsFile();
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                const dataUrl = ev.target.result;
+                const base64 = dataUrl.split(',')[1];
+                const mime_type = item.type;
+                state[pendingKey].push({ dataUrl, base64, mime_type });
+                _renderImagePreviews(pendingKey, previewEl);
+            };
+            reader.readAsDataURL(blob);
+            break;
+        }
+    }
+}
+
+function _renderImagePreviews(pendingKey, previewEl) {
+    const images = state[pendingKey];
+    if (images.length === 0) {
+        previewEl.style.display = 'none';
+        previewEl.innerHTML = '';
+        return;
+    }
+    previewEl.style.display = 'flex';
+    previewEl.innerHTML = '';
+    images.forEach((img, idx) => {
+        const item = document.createElement('div');
+        item.className = 'preview-item';
+        item.innerHTML = `<img src="${img.dataUrl}" alt="preview"><button class="remove-preview" data-idx="${idx}">&times;</button>`;
+        item.querySelector('.remove-preview').addEventListener('click', () => {
+            state[pendingKey].splice(idx, 1);
+            _renderImagePreviews(pendingKey, previewEl);
+        });
+        previewEl.appendChild(item);
+    });
+}
+
+function _clearPendingImages(pendingKey, previewEl) {
+    state[pendingKey] = [];
+    if (previewEl) {
+        previewEl.style.display = 'none';
+        previewEl.innerHTML = '';
+    }
+}
 
 function initChat() {
     // Enviar mensaje
@@ -1578,6 +1667,11 @@ function initChat() {
     elements.chatInput.addEventListener('input', () => {
         elements.chatInput.style.height = 'auto';
         elements.chatInput.style.height = Math.min(elements.chatInput.scrollHeight, 150) + 'px';
+    });
+
+    // Pegar imagen (Ctrl+V)
+    elements.chatInput.addEventListener('paste', (e) => {
+        _handlePasteImage(e, 'pendingChatImages', elements.chatImagePreview);
     });
 
     // Limpiar chat
@@ -1612,6 +1706,7 @@ async function loadClassChat(classId) {
         }
 
         // Cargar archivos de conocimiento, rúbricas e imágenes
+        await loadGlobalKnowledgeFiles();
         await loadKnowledgeFiles(classId);
         await loadRubricaFiles(classId);
         await loadContextImages(classId);
@@ -1623,11 +1718,13 @@ async function loadClassChat(classId) {
 
 async function sendChatMessage() {
     const message = elements.chatInput.value.trim();
-    if (!message || !state.currentClass) return;
+    const images = state.pendingChatImages.map(img => ({ base64: img.base64, mime_type: img.mime_type }));
+    if ((!message && images.length === 0) || !state.currentClass) return;
 
-    // Limpiar input
+    // Limpiar input y previews
     elements.chatInput.value = '';
     elements.chatInput.style.height = 'auto';
+    _clearPendingImages('pendingChatImages', elements.chatImagePreview);
 
     // Ocultar mensaje de bienvenida
     const welcomeMsg = elements.chatMessages.querySelector('.chat-welcome');
@@ -1636,7 +1733,7 @@ async function sendChatMessage() {
     }
 
     // Agregar mensaje del usuario
-    addChatMessage('user', message);
+    addChatMessage('user', message || '(imagen)');
 
     // Deshabilitar envío mientras se procesa
     elements.sendChatBtn.disabled = true;
@@ -1645,10 +1742,13 @@ async function sendChatMessage() {
     const typingId = addTypingIndicator();
 
     try {
+        const payload = { message: message || '' };
+        if (images.length > 0) payload.images = images;
+
         const response = await fetch(`/api/chat/${state.currentClass.id}/message`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message })
+            body: JSON.stringify(payload)
         });
 
         const data = await response.json();
@@ -1730,6 +1830,7 @@ async function clearChat() {
     try {
         await fetch(`/api/chat/${state.currentClass.id}/clear`, { method: 'POST' });
         resetChat();
+        _clearPendingImages('pendingChatImages', elements.chatImagePreview);
         showToast('success', 'Chat limpiado', 'El historial de conversación ha sido borrado');
     } catch (error) {
         console.error('Error clearing chat:', error);
@@ -1771,6 +1872,11 @@ function initFolderChat() {
         elements.folderChatInput.style.height = Math.min(elements.folderChatInput.scrollHeight, 150) + 'px';
     });
 
+    // Pegar imagen (Ctrl+V)
+    elements.folderChatInput.addEventListener('paste', (e) => {
+        _handlePasteImage(e, 'pendingFolderChatImages', elements.folderChatImagePreview);
+    });
+
     elements.clearFolderChatBtn.addEventListener('click', clearFolderChat);
 }
 
@@ -1808,6 +1914,7 @@ async function showFolderChat(folderPath, folderName, classCount) {
     await loadFolderChatSession(folderPath);
 
     // Load knowledge, rubrica and image files for folder
+    await loadGlobalKnowledgeFiles();
     await loadKnowledgeFiles(folderPath, elements.folderKnowledgeFiles);
     await loadRubricaFiles(folderPath, elements.folderRubricaFiles);
     await loadContextImages(folderPath, elements.folderContextImageFiles);
@@ -1883,24 +1990,29 @@ async function loadFolderChatSession(folderPath) {
 
 async function sendFolderChatMessage() {
     const message = elements.folderChatInput.value.trim();
-    if (!message || !state.currentFolder) return;
+    const images = state.pendingFolderChatImages.map(img => ({ base64: img.base64, mime_type: img.mime_type }));
+    if ((!message && images.length === 0) || !state.currentFolder) return;
 
     elements.folderChatInput.value = '';
     elements.folderChatInput.style.height = 'auto';
+    _clearPendingImages('pendingFolderChatImages', elements.folderChatImagePreview);
 
     const welcome = elements.folderChatMessages.querySelector('.chat-welcome');
     if (welcome) welcome.style.display = 'none';
 
-    addFolderChatMessage('user', message);
+    addFolderChatMessage('user', message || '(imagen)');
     elements.sendFolderChatBtn.disabled = true;
 
     const typingId = addFolderTypingIndicator();
 
     try {
+        const payload = { message: message || '' };
+        if (images.length > 0) payload.images = images;
+
         const res = await fetch(`/api/folder-chat/${state.currentFolder.path}/message`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message })
+            body: JSON.stringify(payload)
         });
         const data = await res.json();
 
@@ -1972,6 +2084,7 @@ async function clearFolderChat() {
     try {
         await fetch(`/api/folder-chat/${state.currentFolder.path}/clear`, { method: 'POST' });
         resetFolderChat();
+        _clearPendingImages('pendingFolderChatImages', elements.folderChatImagePreview);
         showToast('success', 'Chat limpiado', 'El historial de la carpeta ha sido borrado');
     } catch (error) {
         console.error('Error limpiando chat de carpeta:', error);
@@ -2131,10 +2244,111 @@ async function renameClass() {
 }
 
 // ============================================
+// Modal de asignación de carpetas (multi-upload)
+// ============================================
+
+const ASSIGN_HISTORY_KEY = 'vtr_folder_assignments';
+
+function initAssignModal() {
+    elements.assignCancelBtn.addEventListener('click', () => {
+        elements.assignModal.classList.remove('active');
+    });
+    elements.assignConfirmBtn.addEventListener('click', confirmAssignModal);
+    elements.assignModal.addEventListener('click', (e) => {
+        if (e.target === elements.assignModal) {
+            elements.assignModal.classList.remove('active');
+        }
+    });
+}
+
+function _loadSavedAssignments() {
+    try { return JSON.parse(localStorage.getItem(ASSIGN_HISTORY_KEY) || '{}'); } catch { return {}; }
+}
+
+function _saveAssignments(map) {
+    localStorage.setItem(ASSIGN_HISTORY_KEY, JSON.stringify(map));
+}
+
+function showAssignModal(items) {
+    const saved = _loadSavedAssignments();
+    // Build folder options HTML from the existing folderSelect
+    const folderOptionsHtml = elements.folderSelect.innerHTML;
+
+    elements.assignList.innerHTML = items.map((item, i) => {
+        const suggestion = saved[item.file.name] ?? '';
+        return `<div class="assign-row" data-idx="${i}">
+            <span class="assign-row-name" title="${escapeHtml(item.file.name)}">${escapeHtml(item.file.name)}</span>
+            <span class="assign-row-size">${formatFileSize(item.file.size)}</span>
+            <select class="assign-folder-select" data-filename="${escapeHtml(item.file.name)}">${folderOptionsHtml}</select>
+        </div>`;
+    }).join('');
+
+    // Pre-select saved folders
+    elements.assignList.querySelectorAll('.assign-folder-select').forEach(sel => {
+        const fname = sel.dataset.filename;
+        if (saved[fname] !== undefined) {
+            // Check if option exists
+            const opt = [...sel.options].find(o => o.value === saved[fname]);
+            if (opt) sel.value = saved[fname];
+        }
+    });
+
+    elements.assignModal.classList.add('active');
+}
+
+function confirmAssignModal() {
+    const selects = elements.assignList.querySelectorAll('.assign-folder-select');
+    const assignMap = {};
+
+    selects.forEach(sel => {
+        const fname = sel.dataset.filename;
+        const folderPath = sel.value;
+        assignMap[fname] = folderPath;
+
+        // Update the queue item's folderPath
+        const item = state.queue.find(q => q.file.name === fname && q.status === 'pending');
+        if (item) item.folderPath = folderPath;
+    });
+
+    // Save assignments if checkbox is checked
+    if (elements.assignRememberCheck.checked) {
+        const saved = _loadSavedAssignments();
+        Object.assign(saved, assignMap);
+        _saveAssignments(saved);
+    }
+
+    elements.assignModal.classList.remove('active');
+
+    // Multi-file: auto-enable shutdown
+    elements.shutdownCheckbox.checked = true;
+
+    renderQueue();
+    updateProcessBtn();
+
+    // Auto-start processing
+    processQueue();
+}
+
+// ============================================
 // Knowledge & Rubrica Panels
 // ============================================
 
 function initPanels() {
+    // Global extra knowledge panels
+    _initToggle(elements.globalKnowledgeToggleClassChat, elements.globalKnowledgePanelClassChat);
+    _initToggle(elements.globalKnowledgeToggleFolderChat, elements.globalKnowledgePanelFolderChat);
+
+    // Global extra knowledge file inputs (class uses class-based selector)
+    document.querySelectorAll('.globalKnowledgeFileInput').forEach(input => {
+        input.addEventListener('change', async (e) => {
+            if (!e.target.files.length) return;
+            for (const f of e.target.files) {
+                await uploadGlobalKnowledgeFile(f);
+            }
+            e.target.value = '';
+        });
+    });
+
     // Class chat panels
     _initToggle(elements.knowledgeToggle, elements.knowledgePanel);
     _initToggle(elements.rubricaToggle, elements.rubricaPanel);
@@ -2382,6 +2596,35 @@ async function loadRubricaFiles(classId, containerEl) {
     } catch (_) {}
 }
 
+// ── Global extra knowledge ──
+
+async function loadGlobalKnowledgeFiles() {
+    const containers = [elements.globalKnowledgeFilesClassChat, elements.globalKnowledgeFilesFolderChat];
+    try {
+        const res = await fetch('/api/extra-knowledge');
+        const data = await res.json();
+        const files = data.files || [];
+        containers.forEach(c => { if (c) renderFileList(files, c, '__global__', 'global_knowledge'); });
+    } catch (_) {}
+}
+
+async function uploadGlobalKnowledgeFile(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+        const res = await fetch('/api/extra-knowledge', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (data.success) {
+            showToast('success', 'Extra knowledge subido', data.filename);
+            await loadGlobalKnowledgeFiles();
+        } else {
+            showToast('error', 'Error', data.error || 'No se pudo subir');
+        }
+    } catch (err) {
+        showToast('error', 'Error', 'Error de conexion');
+    }
+}
+
 function renderFileList(files, container, classId, type) {
     if (files.length === 0) {
         container.innerHTML = '';
@@ -2389,6 +2632,7 @@ function renderFileList(files, container, classId, type) {
     }
     const itemClass = type === 'knowledge' ? 'knowledge-file-item'
                     : type === 'rubrica' ? 'rubrica-file-item'
+                    : type === 'global_knowledge' ? 'knowledge-file-item'
                     : 'context-image-file-item';
     container.innerHTML = files.map(f => `
         <div class="${itemClass}">
@@ -2400,7 +2644,9 @@ function renderFileList(files, container, classId, type) {
         btn.addEventListener('click', async () => {
             const filename = btn.dataset.name;
             let endpoint;
-            if (type === 'knowledge') {
+            if (type === 'global_knowledge') {
+                endpoint = `/api/extra-knowledge/${encodeURIComponent(filename)}`;
+            } else if (type === 'knowledge') {
                 endpoint = `/api/chat/${classId}/knowledge/${encodeURIComponent(filename)}`;
             } else if (type === 'rubrica') {
                 endpoint = `/api/chat/${classId}/rubrica/${encodeURIComponent(filename)}`;
@@ -2411,7 +2657,8 @@ function renderFileList(files, container, classId, type) {
                 const res = await fetch(endpoint, { method: 'DELETE' });
                 const data = await res.json();
                 if (data.success) {
-                    if (type === 'knowledge') await loadKnowledgeFiles(classId, container);
+                    if (type === 'global_knowledge') await loadGlobalKnowledgeFiles();
+                    else if (type === 'knowledge') await loadKnowledgeFiles(classId, container);
                     else if (type === 'rubrica') await loadRubricaFiles(classId, container);
                     else await loadContextImages(classId, container);
                     showToast('success', 'Eliminado', filename);

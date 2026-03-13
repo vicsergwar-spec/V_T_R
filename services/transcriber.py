@@ -28,6 +28,10 @@ class Transcriber:
         "large-v3": {"cuda": "int8_float16",  "cpu": "int8"},
     }
 
+    # VRAM thresholds for automatic model/quantization downgrade (in GB)
+    _VRAM_THRESHOLD_LARGE_INT8 = 5.0   # < 5 GB free → large-v3 baja a int8 puro
+    _VRAM_THRESHOLD_DOWNGRADE = 3.0    # < 3 GB free → bajar a medium automáticamente
+
     def __init__(self, model_name: str = "medium", openai_api_key: Optional[str] = None):
         """
         Inicializa el transcriptor.
@@ -40,6 +44,7 @@ class Transcriber:
         self.openai_api_key = openai_api_key
         self.model = None
         self.device = self._get_device()
+        self._adjust_for_vram()
         self.compute_type = self._get_compute_type()
 
     def _get_device(self) -> str:
@@ -52,6 +57,54 @@ class Transcriber:
         else:
             logger.warning("CUDA no disponible. Usando CPU (será más lento)")
             return "cpu"
+
+    def _get_free_vram_gb(self) -> float:
+        """Devuelve la VRAM libre en GB, o 0.0 si no hay GPU."""
+        if not TORCH_AVAILABLE or self.device != "cuda":
+            return 0.0
+        try:
+            free, _total = torch.cuda.mem_get_info(0)
+            return free / (1024 ** 3)
+        except Exception as e:
+            logger.warning(f"No se pudo obtener VRAM libre: {e}")
+            return 0.0
+
+    def _adjust_for_vram(self) -> None:
+        """Ajusta modelo y compute_type dinámicamente según la VRAM libre."""
+        if self.device != "cuda" or self.model_name == "openai":
+            return
+
+        free_gb = self._get_free_vram_gb()
+        if free_gb <= 0:
+            return
+
+        original_model = self.model_name
+
+        if free_gb < self._VRAM_THRESHOLD_DOWNGRADE:
+            # Menos de 3 GB: forzar medium (sin importar qué pidió el usuario)
+            if self.model_name in ("large-v3",):
+                self.model_name = "medium"
+                logger.info(
+                    f"[I] VRAM libre: {free_gb:.1f} GB (< {self._VRAM_THRESHOLD_DOWNGRADE} GB) "
+                    f"→ modelo bajado de {original_model} a medium"
+                )
+            else:
+                logger.info(f"[I] VRAM libre: {free_gb:.1f} GB → modelo: {self.model_name}")
+        elif free_gb < self._VRAM_THRESHOLD_LARGE_INT8:
+            # Menos de 5 GB: large-v3 pasa a int8 puro
+            if self.model_name == "large-v3":
+                # Forzar int8 puro en lugar de int8_float16
+                self._COMPUTE_TYPES = {**self._COMPUTE_TYPES,
+                                       "large-v3": {**self._COMPUTE_TYPES["large-v3"],
+                                                    "cuda": "int8"}}
+                logger.info(
+                    f"[I] VRAM libre: {free_gb:.1f} GB (< {self._VRAM_THRESHOLD_LARGE_INT8} GB) "
+                    f"→ large-v3 forzado a int8 puro"
+                )
+            else:
+                logger.info(f"[I] VRAM libre: {free_gb:.1f} GB → modelo: {self.model_name}")
+        else:
+            logger.info(f"[I] VRAM libre: {free_gb:.1f} GB → modelo: {self.model_name}")
 
     def _get_compute_type(self) -> str:
         """Determina el compute_type óptimo para faster-whisper según modelo y dispositivo"""

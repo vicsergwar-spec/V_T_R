@@ -3,7 +3,9 @@
     "allow": [
       "Bash(python:*)",
       "Bash(node:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(pip install:*)",
+      "Bash(pip search:*)"
     ]
   }
 }

@@ -1951,6 +1951,46 @@ body {
     height: 16px;
 }
 
+.chat-image-preview {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 8px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    margin-bottom: 8px;
+}
+
+.chat-image-preview .preview-item {
+    position: relative;
+    display: inline-block;
+}
+
+.chat-image-preview .preview-item img {
+    max-height: 80px;
+    max-width: 120px;
+    border-radius: var(--radius-sm);
+    object-fit: cover;
+}
+
+.chat-image-preview .preview-item .remove-preview {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    width: 20px;
+    height: 20px;
+    background: var(--error);
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 20px;
+    text-align: center;
+    padding: 0;
+}
+
 .chat-input-wrapper {
     display: flex;
     gap: 12px;
@@ -2180,6 +2220,92 @@ body {
     display: flex;
     justify-content: flex-end;
     gap: 12px;
+}
+
+/* ============================================
+   Modal de asignación de carpetas (multi-upload)
+   ============================================ */
+
+.modal-assign {
+    max-width: 600px;
+    width: 95%;
+}
+
+.assign-hint {
+    font-size: 0.88rem;
+    margin-bottom: 16px !important;
+}
+
+.assign-list {
+    max-height: 340px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.assign-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+}
+
+.assign-row-name {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.88rem;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.assign-row-size {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.assign-row select {
+    width: 180px;
+    flex-shrink: 0;
+    padding: 5px 8px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 0.82rem;
+    font-family: inherit;
+}
+
+.assign-row select:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+}
+
+.assign-remember {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 18px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.assign-remember input[type="checkbox"] {
+    accent-color: var(--accent-primary);
+}
+
+/* Queue: per-file folder badge */
+.queue-item-folder {
+    font-size: 0.75rem;
+    color: var(--accent-secondary);
+    margin-left: 4px;
 }
 
 /* ============================================

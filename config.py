@@ -19,12 +19,19 @@ CLASES_DIR.mkdir(exist_ok=True)
 TEMP_DIR = BASE_DIR / "temp"
 TEMP_DIR.mkdir(exist_ok=True)
 
+# Directorio donde se preservan los videos originales procesados
+VIDEOS_ORIGINALES_DIR = BASE_DIR / "videos_originales"
+VIDEOS_ORIGINALES_DIR.mkdir(exist_ok=True)
+
+# Directorio global de extra knowledge (se inyecta en todo chat)
+EXTRA_KNOWLEDGE_DIR = BASE_DIR / "extra_knowledge"
+EXTRA_KNOWLEDGE_DIR.mkdir(exist_ok=True)
+
 # API Keys
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-GOOGLE_VISION_API_KEY = os.getenv("GOOGLE_VISION_API_KEY", "")
 
-# Extracción de slides (requiere GOOGLE_VISION_API_KEY)
+# Extracción de slides (requiere GEMINI_API_KEY, usa Gemini Vision)
 # Poner SLIDE_EXTRACTION_ENABLED=false en .env para desactivar
 SLIDE_EXTRACTION_ENABLED = os.getenv("SLIDE_EXTRACTION_ENABLED", "true").lower() == "true"
 
@@ -56,7 +63,7 @@ DEFAULT_WHISPER_MODEL = "medium"
 
 # Configuración de Gemini
 # Para cambiar de modelo: pon aquí el ID exacto que ves en Google AI Studio
-GEMINI_MODEL = "gemini-3-flash-preview"
+GEMINI_MODEL = "gemini-2.5-flash"
 
 # Configuración de FFmpeg
 AUDIO_SAMPLE_RATE = 16000  # 16kHz es óptimo para Whisper

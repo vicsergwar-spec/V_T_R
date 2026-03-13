@@ -5,14 +5,24 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 import google.generativeai as genai
+from google.generativeai.protos import (
+    Tool as _ProtoTool,
+    GoogleSearchRetrieval as _GoogleSearchRetrieval,
+)
+from services.toon_encoder import dumps as toon_dumps
 
 logger = logging.getLogger(__name__)
+
+# Herramienta de Google Search Grounding reutilizable
+_GOOGLE_SEARCH_TOOL = _ProtoTool(
+    google_search_retrieval=_GoogleSearchRetrieval()
+)
 
 
 class GeminiService:
     """Servicio para interactuar con Google Gemini API"""
 
-    def __init__(self, api_key: str, model_name: str = "gemini-3-flash-preview"):
+    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash"):
         """
         Inicializa el servicio de Gemini.
 
@@ -28,6 +38,42 @@ class GeminiService:
         self.model = genai.GenerativeModel(model_name)
         self.chat_sessions = {}  # Almacena sesiones de chat por clase
         logger.info(f"Servicio Gemini inicializado con modelo: {model_name}")
+
+    # ── TOON conversion helpers ───────────────────────────────────────
+
+    @staticmethod
+    def _to_toon(text: str, label: str = "") -> str:
+        """Convierte texto plano a TOON wrapping: {label: text}."""
+        if not text or not text.strip():
+            return ""
+        return toon_dumps({label: text}) if label else text
+
+    @staticmethod
+    def _transcription_to_toon(transcription_text: str) -> str:
+        """Convierte texto de transcripción (JSONL de segmentos o texto plano) a TOON."""
+        import json
+        lines = transcription_text.strip().splitlines()
+        segments = []
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                seg = json.loads(line)
+                segments.append(seg)
+            except (json.JSONDecodeError, ValueError):
+                # No es JSONL, devolver el texto wrapeado
+                return toon_dumps({"transcripcion": transcription_text})
+        if not segments:
+            return toon_dumps({"transcripcion": transcription_text})
+        return toon_dumps({"segmentos": segments})
+
+    @staticmethod
+    def _history_to_toon(history: list) -> str:
+        """Convierte historial de chat a TOON compacto."""
+        if not history:
+            return ""
+        return toon_dumps({"historial": history})
 
     def generate_folder_name(self, transcription_text: str) -> str:
         """
@@ -87,9 +133,35 @@ Responde SOLO con el nombre de la carpeta, sin explicaciones ni comillas."""
             logger.error(f"Error al generar nombre de carpeta: {e}")
             return f"Clase_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
+    # ── Chunked summarization constants ─────────────────────────────────
+    _CHUNK_MAX_CHARS = 400_000      # ~100k tokens por chunk (Gemini 2.5 Flash context)
+    _CHUNK_OVERLAP_CHARS = 2_000    # ~500 tokens de solapamiento
+
+    def _split_into_chunks(self, text: str) -> list[str]:
+        """Divide texto largo en chunks con solapamiento."""
+        if len(text) <= self._CHUNK_MAX_CHARS:
+            return [text]
+
+        chunks = []
+        start = 0
+        while start < len(text):
+            end = start + self._CHUNK_MAX_CHARS
+            # Cortar en un salto de línea o espacio cercano al límite
+            if end < len(text):
+                cut = text.rfind('\n', start + self._CHUNK_MAX_CHARS - 500, end)
+                if cut == -1:
+                    cut = text.rfind(' ', start + self._CHUNK_MAX_CHARS - 500, end)
+                if cut > start:
+                    end = cut
+            chunks.append(text[start:end])
+            start = end - self._CHUNK_OVERLAP_CHARS
+        return chunks
+
     def generate_summary(self, transcription_text: str, folder_name: str) -> str:
         """
         Genera un resumen estructurado de la clase.
+        Si la transcripción es larga, la divide en chunks, resume cada uno
+        y luego genera un resumen final consolidado.
 
         Args:
             transcription_text: Texto completo de la transcripción
@@ -100,16 +172,44 @@ Responde SOLO con el nombre de la carpeta, sin explicaciones ni comillas."""
         """
         current_date = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-        # Limitar el texto para no exceder los límites del modelo (~25k tokens)
-        max_chars = 100000
-        if len(transcription_text) > max_chars:
-            transcription_text = transcription_text[:max_chars] + "\n\n[... Transcripción truncada por longitud ...]"
-            logger.warning("Transcripción truncada para resumen por exceder el límite de caracteres")
+        try:
+            chunks = self._split_into_chunks(transcription_text)
 
+            if len(chunks) == 1:
+                # Transcripción corta: resumen directo
+                summary_text = self._summarize_single(chunks[0], folder_name, current_date)
+            else:
+                # Transcripción larga: resumir por chunks y consolidar
+                logger.info(f"Transcripción dividida en {len(chunks)} chunks para resumen")
+                partial_summaries = []
+                for i, chunk in enumerate(chunks, 1):
+                    logger.info(f"Resumiendo chunk {i}/{len(chunks)}...")
+                    partial = self._summarize_chunk(chunk, i, len(chunks))
+                    partial_summaries.append(partial)
+
+                combined = "\n\n---\n\n".join(partial_summaries)
+                summary_text = self._summarize_final(combined, folder_name, current_date)
+
+            logger.info("Resumen generado exitosamente")
+            return summary_text
+
+        except Exception as e:
+            logger.error(f"Error al generar resumen: {e}")
+            return f"""# {folder_name.replace('_', ' ')}
+
+## Fecha de procesamiento
+{current_date}
+
+## Error
+No se pudo generar el resumen automáticamente. Por favor, revisa la transcripción directamente.
+"""
+
+    def _summarize_single(self, text: str, folder_name: str, current_date: str) -> str:
+        """Resumen directo de un texto corto."""
         prompt = f"""Eres un asistente académico experto. Analiza la siguiente transcripción de una clase y genera un resumen estructurado.
 
 TRANSCRIPCIÓN DE LA CLASE:
-{transcription_text}
+{text}
 
 GENERA UN RESUMEN EN FORMATO MARKDOWN CON ESTA ESTRUCTURA EXACTA:
 
@@ -134,23 +234,62 @@ INSTRUCCIONES ADICIONALES:
 - Si hay fórmulas o conceptos técnicos, explícalos brevemente
 - El resumen debe ser útil para estudiar antes de un examen"""
 
-        try:
-            response = self.model.generate_content(prompt)
-            summary = response.text.strip()
-            logger.info("Resumen generado exitosamente")
-            return summary
+        response = self.model.generate_content(prompt)
+        return response.text.strip()
 
-        except Exception as e:
-            logger.error(f"Error al generar resumen: {e}")
-            # Retornar un resumen básico en caso de error
-            return f"""# {folder_name.replace('_', ' ')}
+    def _summarize_chunk(self, chunk_text: str, chunk_num: int, total_chunks: int) -> str:
+        """Resume un chunk individual de la transcripción."""
+        prompt = f"""Eres un asistente académico experto. Estás analizando la PARTE {chunk_num} de {total_chunks} \
+de una transcripción de clase.
+
+FRAGMENTO DE LA TRANSCRIPCIÓN (parte {chunk_num}/{total_chunks}):
+{chunk_text}
+
+Resume este fragmento extrayendo:
+- Puntos principales tratados
+- Conceptos clave explicados
+- Tareas o pendientes mencionados (si los hay)
+- Fórmulas o datos técnicos importantes
+
+Sé conciso pero no omitas información académica relevante. Usa viñetas."""
+
+        response = self.model.generate_content(prompt)
+        return response.text.strip()
+
+    def _summarize_final(self, combined_summaries: str, folder_name: str, current_date: str) -> str:
+        """Genera el resumen final consolidado a partir de resúmenes parciales."""
+        prompt = f"""Eres un asistente académico experto. Se te proporcionan resúmenes parciales de \
+distintas partes de una misma clase. Combínalos en un resumen final único, coherente y sin repeticiones.
+
+RESÚMENES PARCIALES:
+{combined_summaries}
+
+GENERA UN RESUMEN FINAL EN FORMATO MARKDOWN CON ESTA ESTRUCTURA EXACTA:
+
+# {folder_name.replace('_', ' ')}
 
 ## Fecha de procesamiento
 {current_date}
 
-## Error
-No se pudo generar el resumen automáticamente. Por favor, revisa la transcripción directamente.
-"""
+## Puntos principales
+(Lista los puntos más importantes de la clase completa, en formato de viñetas, sin repetir)
+
+## Lo más importante para estudiar
+(Identifica los conceptos clave que el estudiante debe dominar, explica brevemente cada uno)
+
+## Tareas o pendientes mencionadas
+(Consolida todas las tareas o pendientes de todas las partes. Si no hay ninguno, indicar \
+"No se mencionaron tareas o pendientes en esta clase.")
+
+INSTRUCCIONES ADICIONALES:
+- Elimina redundancias entre partes
+- Sé conciso pero completo
+- Usa viñetas para mejor legibilidad
+- Destaca términos técnicos importantes con **negritas**
+- El resumen debe ser útil para estudiar antes de un examen"""
+
+        response = self.model.generate_content(prompt)
+        return response.text.strip()
 
     def generate_slides_document(
         self,
@@ -457,6 +596,7 @@ Responde SOLO con el documento Markdown (incluyendo el frontmatter YAML), sin ex
         knowledge_text: str = "",
         rubricas_text: str = "",
         context_images: list = None,
+        extra_knowledge_text: str = "",
     ) -> Optional[str]:
         """
         Inicia (o restaura) una sesión de chat para una clase.
@@ -473,23 +613,44 @@ Responde SOLO con el documento Markdown (incluyendo el frontmatter YAML), sin ex
         Returns:
             El nombre del caché usado/creado (para persistirlo), o None si no se usó caché.
         """
+        # ── Convertir contenido a TOON (compacto, menos tokens) ──
+        toon_transcription = self._transcription_to_toon(transcription_text)
+        toon_slides = toon_dumps({"slides": slides_content}) if slides_content.strip() else ""
+        toon_ek = toon_dumps({"extra_knowledge": extra_knowledge_text}) if extra_knowledge_text and extra_knowledge_text.strip() else ""
+
+        # Bloque de extra knowledge
+        _ek_block = ""
+        if toon_ek:
+            _ek_block = (
+                "\n\n═══════════════════════════════════════════\n"
+                " === CONOCIMIENTO EXTRA (TOON) ===\n"
+                "═══════════════════════════════════════════\n"
+                f"{toon_ek}\n"
+            )
+
+        _anti_hallucination = (
+            "\n\nIMPORTANTE: Responde únicamente con información presente en la "
+            "transcripción, slides o extra knowledge proporcionado. Si no tienes "
+            "la información, dilo explícitamente."
+        )
+
         if slides_content.strip():
             system_instruction = f"""Eres un asistente de estudio especializado. \
 Tu trabajo es ayudar al estudiante a entender y estudiar el contenido de una clase grabada.
-
-Tienes acceso a DOS fuentes de información de la misma clase:
+{_ek_block}
+Tienes acceso a DOS fuentes de información de la misma clase (formato TOON):
 
 ═══════════════════════════════════════════
- FUENTE 1 · TRANSCRIPCIÓN DE AUDIO
+ FUENTE 1 · TRANSCRIPCIÓN DE AUDIO (TOON)
  (lo que se DIJO durante la clase)
 ═══════════════════════════════════════════
-{transcription_text}
+{toon_transcription}
 
 ═══════════════════════════════════════════
- FUENTE 2 · CONTENIDO DE SLIDES / PANTALLA
+ FUENTE 2 · CONTENIDO DE SLIDES / PANTALLA (TOON)
  (lo que se MOSTRÓ en el video)
 ═══════════════════════════════════════════
-{slides_content}
+{toon_slides}
 
 INSTRUCCIONES:
 1. Responde ÚNICAMENTE basándote en las fuentes anteriores.
@@ -501,13 +662,13 @@ INSTRUCCIONES:
    - Si aparece en ambas → menciona ambas fuentes.
 4. Sé claro y didáctico. Usa ejemplos de la clase si los hay.
 5. Puedes resumir secciones, explicar conceptos o preparar al estudiante para exámenes.
-6. Usa un tono amigable pero académico."""
+6. Usa un tono amigable pero académico.{_anti_hallucination}"""
         else:
             system_instruction = f"""Eres un asistente de estudio especializado. \
 Tu trabajo es ayudar al estudiante a entender y estudiar el contenido de una clase grabada.
-
-TRANSCRIPCIÓN DE LA CLASE:
-{transcription_text}
+{_ek_block}
+TRANSCRIPCIÓN DE LA CLASE (TOON):
+{toon_transcription}
 
 INSTRUCCIONES:
 1. Responde ÚNICAMENTE basándote en el contenido de la transcripción.
@@ -515,14 +676,15 @@ INSTRUCCIONES:
 3. Sé claro y didáctico en tus explicaciones.
 4. Si el estudiante pregunta sobre un tema, proporciona ejemplos de la clase si los hay.
 5. Puedes ayudar a resumir secciones específicas, explicar conceptos, o preparar para exámenes.
-6. Usa un tono amigable pero académico."""
+6. Usa un tono amigable pero académico.{_anti_hallucination}"""
 
         session_model, cache_name = self._build_cached_model(system_instruction, cached_content_name)
 
-        sdk_history = [
-            {"role": msg["role"], "parts": [msg["content"]]}
-            for msg in (history or [])
-        ]
+        # Historial previo en TOON para reducir tokens de contexto
+        sdk_history = []
+        for msg in (history or []):
+            toon_content = toon_dumps({"msg": msg["content"]})
+            sdk_history.append({"role": msg["role"], "parts": [toon_content]})
 
         self.chat_sessions[class_id] = {
             "chat": session_model.start_chat(history=sdk_history),
@@ -549,7 +711,7 @@ INSTRUCCIONES:
             or ("403" in err_str and "not found" in err_str)
         )
 
-    def _rebuild_session(self, session_key: str, file_manager) -> None:
+    def _rebuild_session(self, session_key: str, file_manager, extra_knowledge_text: str = "") -> None:
         """
         Reconstruye una sesión de chat tras un error de caché expirado.
         Detecta si es clase o carpeta por el prefijo __folder__.
@@ -581,6 +743,7 @@ INSTRUCCIONES:
                 history=old_history,
                 cached_content_name=None,  # Forzar nuevo caché
                 context_images=context_images,
+                extra_knowledge_text=extra_knowledge_text,
             )
             if new_cache_name:
                 file_manager.save_folder_cache_name(folder_path, new_cache_name)
@@ -608,13 +771,18 @@ INSTRUCCIONES:
                 knowledge_text=knowledge_text,
                 rubricas_text=rubricas_text,
                 context_images=context_images,
+                extra_knowledge_text=extra_knowledge_text,
             )
             if new_cache_name:
                 file_manager.save_cache_name(class_id, new_cache_name)
 
         logger.info(f"Sesión reconstruida tras error de caché: {session_key}")
 
-    def chat(self, class_id: str, user_message: str, file_manager=None) -> str:
+    def chat(
+        self, class_id: str, user_message: str, file_manager=None,
+        extra_knowledge_text: str = "", use_grounding: bool = True,
+        inline_images: Optional[list] = None,
+    ) -> str:
         """
         Envía un mensaje en la sesión de chat de una clase.
 
@@ -622,6 +790,8 @@ INSTRUCCIONES:
             class_id: Identificador de la clase (o session_key para carpetas)
             user_message: Mensaje del usuario
             file_manager: Referencia al FileManager para auto-recovery de caché
+            use_grounding: Habilitar Google Search Grounding (por defecto True)
+            inline_images: Lista de dicts {mime_type, data} con imágenes pegadas
 
         Returns:
             Respuesta de Gemini
@@ -632,7 +802,7 @@ INSTRUCCIONES:
         session = self.chat_sessions[class_id]
 
         try:
-            return self._send_chat_message(class_id, session, user_message)
+            return self._send_chat_message(class_id, session, user_message, use_grounding=use_grounding, inline_images=inline_images)
 
         except Exception as e:
             # Si es error de CachedContent y tenemos file_manager, auto-recovery
@@ -641,9 +811,9 @@ INSTRUCCIONES:
                     f"CachedContent expirado para {class_id}, reconstruyendo sesión..."
                 )
                 try:
-                    self._rebuild_session(class_id, file_manager)
+                    self._rebuild_session(class_id, file_manager, extra_knowledge_text=extra_knowledge_text)
                     session = self.chat_sessions[class_id]
-                    return self._send_chat_message(class_id, session, user_message)
+                    return self._send_chat_message(class_id, session, user_message, use_grounding=use_grounding, inline_images=inline_images)
                 except Exception as retry_err:
                     logger.error(f"Error en retry tras reconstruir sesión: {retry_err}")
                     return "Lo siento, hubo un error al procesar tu pregunta. Por favor, intenta de nuevo."
@@ -651,7 +821,10 @@ INSTRUCCIONES:
             logger.error(f"Error en chat: {e}")
             return "Lo siento, hubo un error al procesar tu pregunta. Por favor, intenta de nuevo."
 
-    def _send_chat_message(self, class_id: str, session: dict, user_message: str) -> str:
+    def _send_chat_message(
+        self, class_id: str, session: dict, user_message: str,
+        use_grounding: bool = True, inline_images: list | None = None,
+    ) -> str:
         """Envía el mensaje y actualiza el historial. Lanza excepciones sin capturar."""
         enriched_message = self._prepend_extra_context(
             user_message,
@@ -659,17 +832,25 @@ INSTRUCCIONES:
             session.get("rubricas_text", ""),
         )
 
+        send_kwargs = {}
+        if use_grounding:
+            send_kwargs["tools"] = [_GOOGLE_SEARCH_TOOL]
+
         context_images = session.get("context_images", [])
-        if context_images:
+        all_images = list(context_images)
+        if inline_images:
+            all_images.extend(inline_images)
+
+        if all_images:
             message_parts = [enriched_message]
-            for img in context_images:
+            for img in all_images:
                 message_parts.append({
                     "mime_type": img["mime_type"],
                     "data": img["data"],
                 })
-            response = session["chat"].send_message(message_parts)
+            response = session["chat"].send_message(message_parts, **send_kwargs)
         else:
-            response = session["chat"].send_message(enriched_message)
+            response = session["chat"].send_message(enriched_message, **send_kwargs)
 
         assistant_message = response.text.strip()
 
@@ -681,16 +862,29 @@ INSTRUCCIONES:
 
     @staticmethod
     def _prepend_extra_context(user_message: str, knowledge_text: str, rubricas_text: str) -> str:
-        """Prepend knowledge and rubrics blocks to the user message if they exist."""
+        """Prepend knowledge and rubrics blocks (TOON) to the user message if they exist."""
         parts = []
         if knowledge_text and knowledge_text.strip():
-            parts.append(f"[CONOCIMIENTO EXTRA]\n{knowledge_text}\n[/CONOCIMIENTO EXTRA]")
+            toon_k = toon_dumps({"conocimiento_extra": knowledge_text})
+            parts.append(f"[CONOCIMIENTO EXTRA · TOON]\n{toon_k}\n[/CONOCIMIENTO EXTRA]")
         if rubricas_text and rubricas_text.strip():
-            parts.append(f"[RÚBRICAS]\n{rubricas_text}\n[/RÚBRICAS]")
+            toon_r = toon_dumps({"rubricas": rubricas_text})
+            parts.append(f"[RÚBRICAS · TOON]\n{toon_r}\n[/RÚBRICAS]")
         if parts:
             parts.append(user_message)
             return "\n\n".join(parts)
         return user_message
+
+    def refresh_cache(self) -> None:
+        """
+        Invalida todas las sesiones de chat activas para que se recreen
+        con el contenido actualizado (incluido extra knowledge) en el próximo mensaje.
+        """
+        session_keys = list(self.chat_sessions.keys())
+        for key in session_keys:
+            del self.chat_sessions[key]
+        if session_keys:
+            logger.info(f"Caché refrescado: {len(session_keys)} sesión(es) invalidada(s)")
 
     def clear_chat_history(self, class_id: str) -> bool:
         """
@@ -738,6 +932,7 @@ INSTRUCCIONES:
         knowledge_text: str = "",
         rubricas_text: str = "",
         context_images: list = None,
+        extra_knowledge_text: str = "",
     ) -> Optional[str]:
         """
         Inicia (o restaura) una sesión de chat para una carpeta completa.
@@ -761,14 +956,30 @@ INSTRUCCIONES:
             f"Eres un asistente académico especializado. Tienes acceso al contenido "
             f"COMPLETO de la carpeta «{folder_name}» que contiene "
             f"{len(classes_content)} clase(s) grabada(s).\n",
+        ]
+
+        if extra_knowledge_text and extra_knowledge_text.strip():
+            toon_ek = toon_dumps({"extra_knowledge": extra_knowledge_text})
+            parts.append("═" * 60)
+            parts.append("=== CONOCIMIENTO EXTRA (TOON) ===")
+            parts.append("═" * 60)
+            parts.append(toon_ek)
+            parts.append("")
+
+        parts += [
             "INSTRUCCIONES IMPORTANTES:",
+            "Los contenidos de cada clase están en formato TOON (compacto).",
             "1. Responde ÚNICAMENTE basándote en el contenido de las clases mostradas.",
             "2. Indica siempre de qué clase proviene la información: *(📚 Clase: Nombre)*",
             "3. Si algo no aparece en ninguna clase, di: "
             "\"Eso no se menciona en las clases de esta carpeta\".",
             "4. Puedes comparar y relacionar conceptos entre distintas clases.",
             "5. Sé claro y didáctico. Usa ejemplos del contenido cuando los haya.",
-            "6. Usa un tono amigable pero académico.\n",
+            "6. Usa un tono amigable pero académico.",
+            "",
+            "IMPORTANTE: Responde únicamente con información presente en la "
+            "transcripción, slides o extra knowledge proporcionado. Si no tienes "
+            "la información, dilo explícitamente.\n",
         ]
 
         for i, cls in enumerate(classes_content, 1):
@@ -779,22 +990,22 @@ INSTRUCCIONES:
 
             if cls.get("summary"):
                 summary = cls["summary"][:MAX_SUMMARY]
-                parts.append("\n📋 RESUMEN:")
-                parts.append(summary)
+                toon_s = toon_dumps({"resumen": summary})
+                parts.append(f"\n📋 RESUMEN (TOON):\n{toon_s}")
                 if len(cls["summary"]) > MAX_SUMMARY:
                     parts.append("[... resumen truncado ...]")
 
             if cls.get("transcription"):
                 transcription = cls["transcription"][:MAX_TRANSCRIPTION]
-                parts.append("\n📢 TRANSCRIPCIÓN (lo que se DIJO en clase):")
-                parts.append(transcription)
+                toon_t = self._transcription_to_toon(transcription)
+                parts.append(f"\n📢 TRANSCRIPCIÓN (TOON):\n{toon_t}")
                 if len(cls["transcription"]) > MAX_TRANSCRIPTION:
                     parts.append("[... transcripción truncada por longitud ...]")
 
             if cls.get("slides"):
                 slides = cls["slides"][:MAX_SLIDES]
-                parts.append("\n📊 SLIDES / PANTALLA (lo que se MOSTRÓ):")
-                parts.append(slides)
+                toon_sl = toon_dumps({"slides": slides})
+                parts.append(f"\n📊 SLIDES (TOON):\n{toon_sl}")
                 if len(cls["slides"]) > MAX_SLIDES:
                     parts.append("[... slides truncados por longitud ...]")
 
@@ -804,10 +1015,10 @@ INSTRUCCIONES:
 
         session_model, cache_name = self._build_cached_model(system_instruction, cached_content_name)
 
-        sdk_history = [
-            {"role": msg["role"], "parts": [msg["content"]]}
-            for msg in (history or [])
-        ]
+        sdk_history = []
+        for msg in (history or []):
+            toon_content = toon_dumps({"msg": msg["content"]})
+            sdk_history.append({"role": msg["role"], "parts": [toon_content]})
 
         self.chat_sessions[folder_id] = {
             "chat": session_model.start_chat(history=sdk_history),

@@ -248,6 +248,21 @@
 
                 <div class="chat-panels">
                     <div class="chat-panel-section">
+                        <button class="chat-panel-toggle" id="globalKnowledgeToggleFolderChat">
+                            <span>Extra knowledge global</span>
+                            <svg class="panel-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        </button>
+                        <div class="chat-panel-body hidden" id="globalKnowledgePanelFolderChat">
+                            <p class="panel-hint">Archivos globales inyectados en todas las sesiones de chat.</p>
+                            <div class="knowledge-files" id="globalKnowledgeFilesFolderChat"></div>
+                            <label class="btn-upload-knowledge">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                Subir archivo
+                                <input type="file" class="globalKnowledgeFileInput" accept=".pdf,.txt,.docx,.doc,.md,.markdown" hidden>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="chat-panel-section">
                         <button class="chat-panel-toggle" id="folderKnowledgeToggle">
                             <span>Extra knowledge</span>
                             <svg class="panel-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
@@ -316,8 +331,9 @@
                             </svg>
                             <span>Limpiar Chat</span>
                         </button>
+                        <div id="folderChatImagePreview" class="chat-image-preview" style="display:none;"></div>
                         <div class="chat-input-wrapper">
-                            <textarea id="folderChatInput" placeholder="Pregunta sobre cualquier clase de esta carpeta..." rows="1"></textarea>
+                            <textarea id="folderChatInput" placeholder="Pregunta sobre cualquier clase de esta carpeta... (Ctrl+V para pegar imagen)" rows="1"></textarea>
                             <button class="btn-send" id="sendFolderChatBtn">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <line x1="22" y1="2" x2="11" y2="13"/>
@@ -380,6 +396,14 @@
                                 </svg>
                                 Descargar MD
                             </button>
+                            <button class="btn-download-transcription btn-download-toon" id="downloadToonBtn" title="Descargar en formato TOON (compacto para IA)">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                    <polyline points="7 10 12 15 17 10"/>
+                                    <line x1="12" y1="15" x2="12" y2="3"/>
+                                </svg>
+                                Descargar TOON
+                            </button>
                         </div>
                         <div class="transcription-content" id="transcriptionContent">
                             <!-- Segmentos de transcripción -->
@@ -424,6 +448,21 @@
                     <!-- Tab: Chat -->
                     <div class="tab-content" id="tab-chat">
                         <div class="chat-panels">
+                            <div class="chat-panel-section">
+                                <button class="chat-panel-toggle" id="globalKnowledgeToggleClassChat">
+                                    <span>Extra knowledge global</span>
+                                    <svg class="panel-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                                </button>
+                                <div class="chat-panel-body hidden" id="globalKnowledgePanelClassChat">
+                                    <p class="panel-hint">Archivos globales inyectados en todas las sesiones de chat.</p>
+                                    <div class="knowledge-files" id="globalKnowledgeFilesClassChat"></div>
+                                    <label class="btn-upload-knowledge">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                        Subir archivo
+                                        <input type="file" class="globalKnowledgeFileInput" accept=".pdf,.txt,.docx,.doc,.md,.markdown" hidden>
+                                    </label>
+                                </div>
+                            </div>
                             <div class="chat-panel-section">
                                 <button class="chat-panel-toggle" id="knowledgeToggle">
                                     <span>Extra knowledge</span>
@@ -492,8 +531,9 @@
                                     </svg>
                                     <span>Limpiar Chat</span>
                                 </button>
+                                <div id="chatImagePreview" class="chat-image-preview" style="display:none;"></div>
                                 <div class="chat-input-wrapper">
-                                    <textarea id="chatInput" placeholder="Escribe tu pregunta sobre la clase..." rows="1"></textarea>
+                                    <textarea id="chatInput" placeholder="Escribe tu pregunta sobre la clase... (Ctrl+V para pegar imagen)" rows="1"></textarea>
                                     <button class="btn-send" id="sendChatBtn">
                                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                             <line x1="22" y1="2" x2="11" y2="13"/>
@@ -520,6 +560,25 @@
             <div class="modal-actions">
                 <button class="btn-secondary" id="modalCancel">Cancelar</button>
                 <button class="btn-danger" id="modalConfirm">Confirmar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de asignación de carpetas (multi-upload) -->
+    <div class="modal" id="assignModal">
+        <div class="modal-content modal-assign">
+            <h3>Asignar carpetas</h3>
+            <p class="assign-hint">Selecciona la carpeta destino para cada video</p>
+            <div class="assign-list" id="assignList">
+                <!-- filas generadas dinámicamente -->
+            </div>
+            <div class="assign-remember">
+                <input type="checkbox" id="assignRememberCheck" checked>
+                <label for="assignRememberCheck">Recordar asignaciones para la próxima vez</label>
+            </div>
+            <div class="modal-actions">
+                <button class="btn-secondary" id="assignCancelBtn">Cancelar</button>
+                <button class="btn-primary" id="assignConfirmBtn">Procesar todo</button>
             </div>
         </div>
     </div>

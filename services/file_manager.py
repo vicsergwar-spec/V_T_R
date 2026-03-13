@@ -6,6 +6,7 @@ import re
 import json
 import shutil
 import logging
+import unicodedata
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -14,6 +15,9 @@ logger = logging.getLogger(__name__)
 
 # Detecta el sufijo de fecha/hora que añadimos al crear clases: _YYYY-MM-DD_HH-MM
 _DATE_SUFFIX_RE = re.compile(r'^(.+?)_(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2})$')
+
+
+VIDEOS_ORIGINALES_DIR = Path(__file__).parent.parent / "videos_originales"
 
 
 class FileManager:
@@ -26,6 +30,7 @@ class FileManager:
 
         self.clases_dir.mkdir(parents=True, exist_ok=True)
         self.temp_dir.mkdir(parents=True, exist_ok=True)
+        VIDEOS_ORIGINALES_DIR.mkdir(parents=True, exist_ok=True)
 
         logger.info(f"FileManager inicializado. Clases en: {self.clases_dir}")
 
@@ -124,9 +129,14 @@ class FileManager:
         logger.info(f"Video guardado temporalmente: {temp_path}")
         return str(temp_path)
 
-    def cleanup_temp_files(self, video_path: str, audio_path: str = None) -> None:
+    def cleanup_temp_files(self, video_path: str, audio_path: str = None, delete_video: bool = False) -> None:
+        """
+        Limpia archivos temporales.
+        Por defecto NO elimina el video (se preserva con preserve_video).
+        Pasar delete_video=True en paths de error donde no se preservó el video.
+        """
         try:
-            if video_path and Path(video_path).exists():
+            if delete_video and video_path and Path(video_path).exists():
                 os.remove(video_path)
                 logger.info(f"Video temporal eliminado: {video_path}")
             if audio_path and Path(audio_path).exists():
@@ -134,6 +144,154 @@ class FileManager:
                 logger.info(f"Audio temporal eliminado: {audio_path}")
         except Exception as e:
             logger.warning(f"Error al eliminar archivos temporales: {e}")
+
+    def preserve_video(self, video_path: str, folder_name: str, folder_path: str = "") -> Optional[str]:
+        """
+        Mueve el video original a videos_originales/<materia>/<nombre>.ext
+        en lugar de eliminarlo.
+
+        Args:
+            video_path: Ruta temporal del video
+            folder_name: Nombre de la carpeta de clase (usado como nombre del video)
+            folder_path: Carpeta padre (materia), ej: "Matematicas"
+
+        Returns:
+            Ruta final del video, o None si falla
+        """
+        try:
+            src = Path(video_path)
+            if not src.exists():
+                return None
+
+            # Determinar subdirectorio de materia
+            materia = folder_path.replace("/", os.sep) if folder_path else "General"
+            dest_dir = VIDEOS_ORIGINALES_DIR / materia
+            dest_dir.mkdir(parents=True, exist_ok=True)
+
+            # Nombre del archivo: nombre de clase + extensión original
+            ext = src.suffix
+            safe_name = "".join(c for c in folder_name if c.isalnum() or c in "_- ")[:80]
+            dest = dest_dir / f"{safe_name}{ext}"
+
+            # Evitar colisiones
+            if dest.exists():
+                counter = 1
+                while (dest_dir / f"{safe_name}_{counter}{ext}").exists():
+                    counter += 1
+                dest = dest_dir / f"{safe_name}_{counter}{ext}"
+
+            shutil.move(str(src), str(dest))
+            logger.info(f"[I] Video original preservado: {dest}")
+            return str(dest)
+        except Exception as e:
+            logger.warning(f"Error preservando video original: {e}")
+            # Fallback: no eliminar el video, dejarlo en temp
+            return None
+
+    def get_preserved_video(self, class_id: str) -> Optional[str]:
+        """
+        Busca el video original preservado para una clase dada.
+        Busca en videos_originales/<materia>/ por nombre de clase.
+        """
+        # Extraer nombre base de la clase (sin fecha)
+        folder_name = class_id.split("/")[-1] if "/" in class_id else class_id
+        materia = "/".join(class_id.split("/")[:-1]) if "/" in class_id else "General"
+
+        search_dir = VIDEOS_ORIGINALES_DIR / materia.replace("/", os.sep)
+        if not search_dir.exists():
+            # Buscar en toda la carpeta de videos_originales
+            search_dir = VIDEOS_ORIGINALES_DIR
+
+        # Buscar archivos cuyo nombre contenga el nombre de la carpeta de clase
+        for f in search_dir.rglob("*"):
+            if f.is_file() and f.suffix.lower() in (
+                '.mp4', '.mkv', '.avi', '.mov', '.webm',
+                '.flv', '.wmv', '.m4v', '.mpeg', '.mpg'
+            ):
+                if folder_name in f.stem or f.stem in folder_name:
+                    return str(f)
+        return None
+
+    def regenerate_slides(self, class_id: str, slide_extractor, gemini_service=None) -> dict:
+        """
+        Reprocesa los slides de una clase desde cero usando el video original.
+        NO toca transcripcion.jsonl ni resumen.md.
+
+        Args:
+            class_id: ID de la clase (ruta relativa)
+            slide_extractor: Instancia de SlideExtractor
+            gemini_service: Instancia de GeminiService (para regenerar documento)
+
+        Returns:
+            dict con resultado: {success, message, slides_count}
+        """
+        class_folder = self.clases_dir / class_id
+        if not class_folder.exists():
+            return {"success": False, "message": "Clase no encontrada"}
+
+        # Buscar video original
+        video_path = self.get_preserved_video(class_id)
+        if not video_path or not Path(video_path).exists():
+            return {"success": False, "message": "Video original no encontrado en videos_originales/"}
+
+        # Borrar slides e imágenes anteriores
+        slides_md_path = class_folder / "slides.md"
+        slides_doc_path = class_folder / "slides_document.md"
+        slide_images_dir = class_folder / "slide_images"
+
+        if slides_md_path.exists():
+            slides_md_path.unlink()
+            logger.info(f"[I] slides.md anterior eliminado: {class_id}")
+        if slides_doc_path.exists():
+            slides_doc_path.unlink()
+            logger.info(f"[I] slides_document.md anterior eliminado: {class_id}")
+        if slide_images_dir.exists():
+            shutil.rmtree(slide_images_dir)
+            logger.info(f"[I] slide_images/ anterior eliminado: {class_id}")
+
+        # Reprocesar slides
+        try:
+            slides = slide_extractor.extract_slides(
+                video_path=video_path,
+                temp_dir=str(self.temp_dir),
+                persist_dir=str(class_folder),
+            )
+            slides_storage_md = slide_extractor.format_slides_for_storage(slides)
+            n_useful = len([s for s in slides if s.get("text") or s.get("visual_description")])
+
+            if slides_storage_md:
+                self.save_slides(slides_storage_md, class_folder)
+                logger.info(f"[I] Slides regenerados: {n_useful} con contenido")
+
+                # Regenerar documento de slides con IA si hay servicio
+                if gemini_service:
+                    try:
+                        folder_name = class_id.split('/')[-1] if '/' in class_id else class_id
+                        # Construir mapa de imágenes
+                        import re as _r
+                        image_map = {}
+                        new_images_dir = class_folder / "slide_images"
+                        if new_images_dir.exists():
+                            for fp in sorted(new_images_dir.glob("slide_*.png")):
+                                m = _r.match(r'slide_(\d+)(?:_sub_\d+)?\.png', fp.name)
+                                if m:
+                                    slide_num = int(m.group(1))
+                                    image_map.setdefault(slide_num, []).append(f"slide_images/{fp.name}")
+                        slides_document = gemini_service.generate_slides_document(
+                            slides_storage_md, folder_name, image_map=image_map
+                        )
+                        if slides_document:
+                            self.save_slides_document(slides_document, class_folder)
+                            logger.info("[I] Documento de slides regenerado con IA")
+                    except Exception as e:
+                        logger.warning(f"Error regenerando documento de slides: {e}")
+
+                return {"success": True, "message": f"{n_useful} slides regenerados", "slides_count": n_useful}
+            else:
+                return {"success": True, "message": "No se encontró contenido en los slides", "slides_count": 0}
+        except Exception as e:
+            logger.error(f"Error regenerando slides: {e}")
+            return {"success": False, "message": str(e)}
 
     def get_all_classes(self) -> list:
         """
@@ -381,6 +539,7 @@ class FileManager:
     def create_folder(self, folder_path: str) -> dict:
         """
         Crea una carpeta de organización (no una clase).
+        Los nombres se normalizan sin tildes para evitar problemas en rutas.
 
         Args:
             folder_path: Ruta relativa, ej: "Matematicas" o "Matematicas/Calculo"
@@ -616,15 +775,100 @@ class FileManager:
 
     @staticmethod
     def _sanitize_knowledge_filename(filename: str) -> str:
-        """Sanitiza un nombre de archivo para conocimiento/rúbrica."""
+        """Sanitiza un nombre de archivo para conocimiento/rúbrica: sin tildes."""
         path = Path(filename)
         name = path.stem
         ext = path.suffix
+        # Eliminar tildes/diacríticos
+        nfkd = unicodedata.normalize("NFKD", name)
+        name = "".join(c for c in nfkd if not unicodedata.combining(c))
         name = "".join(c for c in name if c.isalnum() or c in "._- ")
         name = name.replace(" ", "_")
         if not name:
             name = "archivo"
         return f"{name}{ext}"
+
+    # ──────────────────────────────────────────────────────────
+    # Extra knowledge global (carpeta extra_knowledge/ del proyecto)
+    # ──────────────────────────────────────────────────────────
+
+    def _ensure_extra_knowledge_dir(self) -> Path:
+        """Devuelve la ruta de la carpeta global extra_knowledge, creándola si no existe."""
+        ek_dir = self.base_dir / "extra_knowledge"
+        ek_dir.mkdir(parents=True, exist_ok=True)
+        return ek_dir
+
+    def get_extra_knowledge_content(self) -> str:
+        """Lee todos los archivos .txt/.md/.pdf/.docx en extra_knowledge/ y devuelve texto combinado."""
+        ek_dir = self._ensure_extra_knowledge_dir()
+        parts = []
+        for f in sorted(ek_dir.iterdir()):
+            if not f.is_file():
+                continue
+            ext = f.suffix.lower()
+            size = f.stat().st_size
+            if ext in ('.txt', '.md', '.markdown'):
+                try:
+                    content = f.read_text(encoding="utf-8")
+                    parts.append(f"--- Archivo: {f.name} ---\n{content}")
+                    logger.info(f"[I] Extra knowledge inyectado: {f.name} ({size} bytes)")
+                except Exception as e:
+                    logger.warning(f"Error leyendo extra knowledge {f}: {e}")
+            elif ext == '.pdf':
+                try:
+                    import PyPDF2
+                    with open(f, 'rb') as pdf_file:
+                        reader = PyPDF2.PdfReader(pdf_file)
+                        text = "\n".join(page.extract_text() or "" for page in reader.pages)
+                        parts.append(f"--- Archivo PDF: {f.name} ---\n{text}")
+                        logger.info(f"[I] Extra knowledge inyectado: {f.name} ({size} bytes)")
+                except Exception:
+                    parts.append(f"--- Archivo PDF: {f.name} (contenido no extraíble) ---")
+            elif ext in ('.docx', '.doc'):
+                try:
+                    import docx
+                    doc = docx.Document(str(f))
+                    text = "\n".join(p.text for p in doc.paragraphs)
+                    parts.append(f"--- Archivo DOCX: {f.name} ---\n{text}")
+                    logger.info(f"[I] Extra knowledge inyectado: {f.name} ({size} bytes)")
+                except Exception:
+                    parts.append(f"--- Archivo DOCX: {f.name} (contenido no extraíble) ---")
+        return "\n\n".join(parts)
+
+    def save_extra_knowledge_file(self, filename: str, file_storage) -> str:
+        """Guarda un archivo en la carpeta global extra_knowledge/."""
+        ek_dir = self._ensure_extra_knowledge_dir()
+        safe_name = self._sanitize_knowledge_filename(filename)
+        dest = ek_dir / safe_name
+        file_storage.save(str(dest))
+        logger.info(f"Extra knowledge guardado: {dest} ({dest.stat().st_size} bytes)")
+        return safe_name
+
+    def save_extra_knowledge_text(self, filename: str, content: str) -> str:
+        """Guarda texto como archivo en la carpeta global extra_knowledge/."""
+        ek_dir = self._ensure_extra_knowledge_dir()
+        dest = ek_dir / filename
+        dest.write_text(content, encoding="utf-8")
+        logger.info(f"Extra knowledge texto guardado: {dest} ({dest.stat().st_size} bytes)")
+        return filename
+
+    def list_extra_knowledge_files(self) -> list:
+        """Lista archivos en la carpeta global extra_knowledge/."""
+        ek_dir = self._ensure_extra_knowledge_dir()
+        files = []
+        for f in sorted(ek_dir.iterdir()):
+            if f.is_file():
+                files.append({"name": f.name, "size": f.stat().st_size})
+        return files
+
+    def delete_extra_knowledge_file(self, filename: str) -> bool:
+        """Elimina un archivo de la carpeta global extra_knowledge/."""
+        fpath = self._ensure_extra_knowledge_dir() / filename
+        if fpath.exists():
+            fpath.unlink()
+            logger.info(f"Extra knowledge eliminado: {fpath}")
+            return True
+        return False
 
     # ──────────────────────────────────────────────────────────
     # Helpers internos
@@ -692,8 +936,17 @@ class FileManager:
         }
 
     @staticmethod
+    def _strip_accents(text: str) -> str:
+        """Elimina tildes/diacríticos de un texto, preservando caracteres base."""
+        nfkd = unicodedata.normalize("NFKD", text)
+        return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+    @staticmethod
     def _sanitize_folder_name(name: str) -> str:
-        """Sanitiza un nombre de carpeta (reemplaza espacios, guiones, caracteres especiales)"""
+        """Sanitiza un nombre de carpeta: sin tildes, sin espacios, sin caracteres especiales."""
+        # Eliminar tildes/diacríticos para evitar problemas en rutas del sistema
+        nfkd = unicodedata.normalize("NFKD", name)
+        name = "".join(c for c in nfkd if not unicodedata.combining(c))
         name = name.replace(" ", "_").replace("-", "_")
         sanitized = "".join(c for c in name if c.isalnum() or c == "_")
         if len(sanitized) > 60:
@@ -702,10 +955,13 @@ class FileManager:
 
     @staticmethod
     def _sanitize_filename(filename: str) -> str:
-        """Sanitiza un nombre de archivo y añade timestamp para evitar colisiones"""
+        """Sanitiza un nombre de archivo: sin tildes en ruta, añade timestamp."""
         path = Path(filename)
         name = path.stem
         ext = path.suffix
+        # Eliminar tildes/diacríticos
+        nfkd = unicodedata.normalize("NFKD", name)
+        name = "".join(c for c in nfkd if not unicodedata.combining(c))
         name = "".join(c for c in name if c.isalnum() or c in "._- ")
         name = name.replace(" ", "_")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

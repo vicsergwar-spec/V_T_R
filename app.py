@@ -4,10 +4,14 @@ Servidor Flask Principal
 """
 import os
 import time
+import base64
+import glob as glob_mod
 import threading
 import subprocess
 import logging
+import logging.handlers
 import collections
+from datetime import datetime
 from pathlib import Path
 from flask import Flask, request, jsonify, send_from_directory, Response
 from flask_cors import CORS
@@ -15,12 +19,30 @@ from werkzeug.utils import secure_filename
 
 import config
 from services import AudioExtractor, Transcriber, GeminiService, FileManager, SlideExtractor
+from services.toon_encoder import dumps as toon_dumps
 
-# Configurar logging
+# Configurar logging (consola + archivo rotado por día)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+
+# Log a archivo con rotación diaria
+_LOGS_DIR = Path(r"D:\Documentos\V_T_R\logs")
+_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+_log_filename = _LOGS_DIR / f"vtr_{datetime.now().strftime('%Y-%m-%d')}.log"
+_file_handler = logging.handlers.TimedRotatingFileHandler(
+    filename=str(_log_filename),
+    when="midnight",
+    interval=1,
+    backupCount=30,      # conservar 30 días
+    encoding="utf-8",
+)
+_file_handler.suffix = "%Y-%m-%d"
+_file_handler.setLevel(logging.INFO)
+_file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+logging.getLogger().addHandler(_file_handler)
+
 logger = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────────────────
@@ -115,18 +137,22 @@ if config.GEMINI_API_KEY:
     except Exception as e:
         logger.error(f"Error inicializando Gemini: {e}")
 
-# SlideExtractor se inicializa si hay GOOGLE_VISION_API_KEY y está habilitado
+# SlideExtractor se inicializa si hay GEMINI_API_KEY y está habilitado
 slide_extractor = None
-if config.GOOGLE_VISION_API_KEY and config.SLIDE_EXTRACTION_ENABLED:
+if config.GEMINI_API_KEY and config.SLIDE_EXTRACTION_ENABLED:
     try:
         slide_extractor = SlideExtractor(
-            vision_api_key=config.GOOGLE_VISION_API_KEY,
-            gemini_api_key=config.GEMINI_API_KEY or None,
+            gemini_api_key=config.GEMINI_API_KEY,
             gemini_model=config.GEMINI_MODEL,
         )
-        logger.info("SlideExtractor listo (Cloud Vision + Gemini Vision)")
+        logger.info("SlideExtractor listo (Gemini Vision)")
     except Exception as e:
         logger.error(f"Error inicializando SlideExtractor: {e}")
+
+
+def _get_extra_knowledge_content() -> str:
+    """Lee el contenido de la carpeta global extra_knowledge/."""
+    return file_manager.get_extra_knowledge_content()
 
 
 def get_transcriber(model_name: str = None) -> Transcriber:
@@ -259,8 +285,8 @@ def _build_image_map(class_id: str) -> dict:
     if not images_dir.exists():
         return {}
     image_map = {}
-    for fp in sorted(images_dir.glob("slide_*.jpg")):
-        m = _r.match(r'slide_(\d+)(?:_sub_\d+)?\.jpg', fp.name)
+    for fp in sorted(list(images_dir.glob("slide_*.jpg")) + list(images_dir.glob("slide_*.png"))):
+        m = _r.match(r'slide_(\d+)(?:_sub_\d+)?\.(jpg|png)', fp.name)
         if m:
             slide_num = int(m.group(1))
             image_map.setdefault(slide_num, []).append(f"slide_images/{fp.name}")
@@ -331,6 +357,69 @@ def regenerate_slides_document(class_id):
                 yield _send("error", {"error": "Gemini no generó contenido"})
         except Exception as e:
             logger.error(f"Error regenerando documento de slides: {e}")
+            yield _send("error", {"error": str(e)})
+
+    return Response(
+        _generate_sse(),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.route('/api/classes/<path:class_id>/slides/regenerate-from-video', methods=['POST'])
+def regenerate_slides_from_video(class_id):
+    """
+    Reprocesa slides desde el video original preservado.
+    NO toca transcripcion.jsonl ni resumen.md.
+    Usa Server-Sent Events (SSE) para enviar progreso en tiempo real.
+    """
+    if not slide_extractor:
+        return jsonify({"error": "SlideExtractor no está configurado"}), 500
+
+    class_info = file_manager.get_class_by_id(class_id)
+    if not class_info:
+        return jsonify({"error": "Clase no encontrada"}), 404
+
+    video_path = file_manager.get_preserved_video(class_id)
+    if not video_path:
+        return jsonify({"error": "Video original no encontrado en videos_originales/"}), 404
+
+    def _generate_sse():
+        import json as _json
+
+        def _send(event, data):
+            return f"event: {event}\ndata: {_json.dumps(data, ensure_ascii=False)}\n\n"
+
+        yield _send("progress", {"step": "Eliminando slides anteriores...", "percent": 5, "eta": ""})
+
+        try:
+            t0 = time.time()
+            result = file_manager.regenerate_slides(
+                class_id, slide_extractor, gemini_service=gemini_service
+            )
+            elapsed = time.time() - t0
+
+            if result["success"]:
+                yield _send("progress", {"step": "¡Listo!", "percent": 100, "eta": ""})
+
+                # Limpiar caché de chat
+                if gemini_service:
+                    gemini_service.clear_chat_history(class_id)
+                file_manager.delete_chat_history(class_id)
+                cache_path = file_manager.clases_dir / class_id / "gemini_cache.txt"
+                if cache_path.exists():
+                    cache_path.unlink()
+
+                yield _send("done", {
+                    "success": True,
+                    "message": result["message"],
+                    "slides_count": result.get("slides_count", 0),
+                    "elapsed": round(elapsed, 1),
+                })
+            else:
+                yield _send("error", {"error": result["message"]})
+        except Exception as e:
+            logger.error(f"Error regenerando slides desde video: {e}")
             yield _send("error", {"error": str(e)})
 
     return Response(
@@ -541,7 +630,7 @@ def process_video():
         except Exception as transcribe_error:
             logger.error(f"Error en transcripción con modelo '{whisper_model}': {transcribe_error}")
             _set_status("Error en transcripción", 0)
-            file_manager.cleanup_temp_files(video_path, audio_path)
+            file_manager.cleanup_temp_files(video_path, audio_path, delete_video=True)
             video_path = None
             audio_path = None
             error_response = {
@@ -577,7 +666,7 @@ def process_video():
                     _set_status(
                         f"Analizando imagen {current} de {total}",
                         pct,
-                        "Cloud Vision + Gemini Vision" if "visual" in msg.lower() else "Cloud Vision",
+                        "Gemini Vision",
                     )
 
                 slides = slide_extractor.extract_slides(
@@ -620,9 +709,11 @@ def process_video():
             except Exception as e:
                 logger.warning(f"Error generando documento de slides (continuando): {e}")
 
-        # 9. Limpiar y finalizar
-        _set_status("¡Listo!", 100)
+        # 9. Preservar video original y limpiar temporales
+        _set_status("Guardando video original...", 99)
+        file_manager.preserve_video(video_path, folder_name, folder_path)
         file_manager.cleanup_temp_files(video_path, audio_path)
+        _set_status("¡Listo!", 100)
 
         class_id = class_folder.relative_to(file_manager.clases_dir).as_posix()
         class_info = file_manager.get_class_by_id(class_id)
@@ -640,14 +731,14 @@ def process_video():
         logger.info(f"Procesamiento cancelado: {e}")
         _set_status("Esperando...", 0)
         if video_path:
-            file_manager.cleanup_temp_files(video_path, audio_path)
+            file_manager.cleanup_temp_files(video_path, audio_path, delete_video=True)
         return jsonify({"error": str(e), "cancelled": True}), 499
 
     except Exception as e:
         logger.error(f"Error procesando video: {e}")
         _set_status("Esperando...", 0)
         if video_path:
-            file_manager.cleanup_temp_files(video_path, audio_path)
+            file_manager.cleanup_temp_files(video_path, audio_path, delete_video=True)
         return jsonify({
             "error": str(e),
             "message": "Error al procesar el video"
@@ -816,6 +907,14 @@ def shutdown_machine():
 
     threading.Thread(target=do_shutdown, daemon=True).start()
     return jsonify({"ok": True, "message": "El equipo se apagará en breve."})
+
+
+@app.route('/api/shutdown-delayed', methods=['POST'])
+def shutdown_machine_delayed():
+    """Apaga el equipo con 60 segundos de margen (post-procesamiento masivo)."""
+    logger.info("Apagado programado en 60 segundos (post-procesamiento).")
+    os.system("shutdown /s /t 60")
+    return jsonify({"ok": True, "message": "El equipo se apagará en 60 segundos."})
 
 
 # ============== TÚNEL REMOTO (cloudflared) ==============
@@ -1143,6 +1242,43 @@ def download_slides(class_id):
         return jsonify({"error": f"Error generando PDF: {str(e)}"}), 500
 
 
+@app.route('/api/classes/<path:class_id>/toon/download', methods=['GET'])
+def download_toon(class_id):
+    """Exporta la transcripción completa de una clase en formato TOON."""
+    segments = file_manager.get_transcription(class_id)
+    if not segments:
+        return jsonify({"error": "No hay transcripción para esta clase"}), 404
+
+    class_info = file_manager.get_class_by_id(class_id)
+    class_name = class_info.get("name", class_id) if class_info else class_id
+    safe_name = "".join(c if c.isalnum() or c in "-_ " else "_" for c in class_name)[:60].strip()
+
+    toon_data = {
+        "clase": class_name,
+        "segmentos": segments,
+    }
+
+    # Añadir resumen si existe
+    summary = file_manager.get_summary(class_id)
+    if summary:
+        toon_data["resumen"] = summary
+
+    # Añadir slides si existen
+    slides = file_manager.get_slides(class_id)
+    if slides:
+        toon_data["slides"] = slides
+
+    toon_text = toon_dumps(toon_data)
+
+    return Response(
+        toon_text,
+        mimetype="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_name}.toon"'
+        },
+    )
+
+
 # ============== RUTAS DE CHAT ==============
 
 @app.route('/api/chat/<path:class_id>/start', methods=['POST'])
@@ -1168,6 +1304,8 @@ def start_chat(class_id):
     rubricas_text = file_manager.get_rubricas_text(class_id) or ""
     context_images = file_manager.get_context_images_data(class_id)
 
+    extra_knowledge = _get_extra_knowledge_content()
+
     new_cache_name = gemini_service.start_chat_session(
         class_id, transcription_text,
         slides_content=slides_content,
@@ -1176,6 +1314,7 @@ def start_chat(class_id):
         knowledge_text=knowledge_text,
         rubricas_text=rubricas_text,
         context_images=context_images,
+        extra_knowledge_text=extra_knowledge,
     )
 
     # Guardar el nuevo nombre de caché si cambió (caché creado o renovado)
@@ -1199,15 +1338,18 @@ def send_chat_message(class_id):
 
     data = request.get_json()
 
-    if not data or 'message' not in data:
-        return jsonify({"error": "Se requiere un mensaje"}), 400
+    if not data or ('message' not in data and 'images' not in data):
+        return jsonify({"error": "Se requiere un mensaje o imagen"}), 400
 
-    user_message = data['message'].strip()
+    user_message = (data.get('message') or '').strip()
+    has_images = bool(data.get('images'))
 
-    if not user_message:
+    if not user_message and not has_images:
         return jsonify({"error": "El mensaje no puede estar vacío"}), 400
 
     try:
+        extra_knowledge = _get_extra_knowledge_content()
+
         # Si no hay sesión activa en memoria, restaurar desde disco
         if class_id not in gemini_service.chat_sessions:
             transcription_text = file_manager.get_transcription_text(class_id)
@@ -1230,12 +1372,22 @@ def send_chat_message(class_id):
                 knowledge_text=knowledge_text,
                 rubricas_text=rubricas_text,
                 context_images=context_images,
+                extra_knowledge_text=extra_knowledge,
             )
             if new_cache_name and new_cache_name != saved_cache_name:
                 file_manager.save_cache_name(class_id, new_cache_name)
 
+        # Procesar imágenes inline si vienen en el payload
+        inline_images = []
+        for img_data in data.get('images', []):
+            raw = base64.b64decode(img_data['base64'])
+            inline_images.append({'mime_type': img_data['mime_type'], 'data': raw})
+
         # Enviar mensaje (con file_manager para auto-recovery de caché)
-        response = gemini_service.chat(class_id, user_message, file_manager=file_manager)
+        response = gemini_service.chat(
+            class_id, user_message, file_manager=file_manager,
+            extra_knowledge_text=extra_knowledge, inline_images=inline_images,
+        )
 
         # Persistir historial actualizado en disco
         updated_history = gemini_service.get_chat_history(class_id)
@@ -1279,6 +1431,13 @@ def clear_chat(class_id):
     gemini_service.clear_chat_history(class_id)
     file_manager.delete_chat_history(class_id)
 
+    # Limpiar imágenes temporales de chat
+    for f in glob_mod.glob(str(config.TEMP_DIR / "chat_img_*")):
+        try:
+            os.remove(f)
+        except OSError:
+            pass
+
     return jsonify({
         "success": True,
         "message": "Historial de chat limpiado"
@@ -1306,6 +1465,7 @@ def start_folder_chat(folder_path):
     session_key = f"__folder__{folder_path}"
 
     context_images = file_manager.get_context_images_data(folder_path)
+    extra_knowledge = _get_extra_knowledge_content()
 
     new_cache_name = gemini_service.start_folder_chat_session(
         folder_id=session_key,
@@ -1314,6 +1474,7 @@ def start_folder_chat(folder_path):
         history=saved_history,
         cached_content_name=saved_cache_name,
         context_images=context_images,
+        extra_knowledge_text=extra_knowledge,
     )
 
     if new_cache_name and new_cache_name != saved_cache_name:
@@ -1336,16 +1497,19 @@ def send_folder_chat_message(folder_path):
         return jsonify({"error": "Gemini API no está configurado"}), 500
 
     data = request.get_json()
-    if not data or 'message' not in data:
-        return jsonify({"error": "Se requiere un mensaje"}), 400
+    if not data or ('message' not in data and 'images' not in data):
+        return jsonify({"error": "Se requiere un mensaje o imagen"}), 400
 
-    user_message = data['message'].strip()
-    if not user_message:
+    user_message = (data.get('message') or '').strip()
+    has_images = bool(data.get('images'))
+    if not user_message and not has_images:
         return jsonify({"error": "El mensaje no puede estar vacío"}), 400
 
     session_key = f"__folder__{folder_path}"
 
     try:
+        extra_knowledge = _get_extra_knowledge_content()
+
         # Si no hay sesión activa, restaurar desde disco
         if session_key not in gemini_service.chat_sessions:
             classes_content = file_manager.get_folder_all_content(folder_path)
@@ -1364,11 +1528,21 @@ def send_folder_chat_message(folder_path):
                 history=saved_history,
                 cached_content_name=saved_cache_name,
                 context_images=context_images,
+                extra_knowledge_text=extra_knowledge,
             )
             if new_cache_name and new_cache_name != saved_cache_name:
                 file_manager.save_folder_cache_name(folder_path, new_cache_name)
 
-        response = gemini_service.chat(session_key, user_message, file_manager=file_manager)
+        # Procesar imágenes inline si vienen en el payload
+        inline_images = []
+        for img_data in data.get('images', []):
+            raw = base64.b64decode(img_data['base64'])
+            inline_images.append({'mime_type': img_data['mime_type'], 'data': raw})
+
+        response = gemini_service.chat(
+            session_key, user_message, file_manager=file_manager,
+            extra_knowledge_text=extra_knowledge, inline_images=inline_images,
+        )
 
         updated_history = gemini_service.get_chat_history(session_key)
         file_manager.save_folder_chat_history(folder_path, updated_history)
@@ -1410,7 +1584,66 @@ def clear_folder_chat(folder_path):
     gemini_service.clear_chat_history(session_key)
     file_manager.delete_folder_chat_history(folder_path)
 
+    # Limpiar imágenes temporales de chat
+    for f in glob_mod.glob(str(config.TEMP_DIR / "chat_img_*")):
+        try:
+            os.remove(f)
+        except OSError:
+            pass
+
     return jsonify({"success": True, "message": "Historial de chat de carpeta limpiado"})
+
+
+# ============== RUTAS DE EXTRA KNOWLEDGE GLOBAL ==============
+
+@app.route('/api/extra-knowledge', methods=['GET'])
+def list_extra_knowledge():
+    """Lista archivos en la carpeta global extra_knowledge/."""
+    files = file_manager.list_extra_knowledge_files()
+    return jsonify({"files": files})
+
+
+@app.route('/api/extra-knowledge', methods=['POST'])
+def upload_extra_knowledge():
+    """Sube un archivo a la carpeta global extra_knowledge/ y refresca caché."""
+    if 'file' in request.files and request.files['file'].filename:
+        f = request.files['file']
+        try:
+            saved_name = file_manager.save_extra_knowledge_file(f.filename, f)
+            if gemini_service:
+                gemini_service.refresh_cache()
+            return jsonify({"success": True, "filename": saved_name})
+        except Exception as e:
+            logger.error(f"Error subiendo extra knowledge: {e}")
+            return jsonify({"error": str(e)}), 500
+    elif request.is_json:
+        data = request.get_json()
+        text = data.get('text', '').strip()
+        if not text:
+            return jsonify({"error": "Texto vacío"}), 400
+        from datetime import datetime as _dt
+        filename = f"knowledge_{_dt.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        try:
+            saved_name = file_manager.save_extra_knowledge_text(filename, text)
+            if gemini_service:
+                gemini_service.refresh_cache()
+            return jsonify({"success": True, "filename": saved_name})
+        except Exception as e:
+            logger.error(f"Error guardando extra knowledge: {e}")
+            return jsonify({"error": str(e)}), 500
+    else:
+        return jsonify({"error": "No se envió archivo ni texto"}), 400
+
+
+@app.route('/api/extra-knowledge/<filename>', methods=['DELETE'])
+def delete_extra_knowledge(filename):
+    """Elimina un archivo de extra_knowledge/ global y refresca caché."""
+    success = file_manager.delete_extra_knowledge_file(filename)
+    if success:
+        if gemini_service:
+            gemini_service.refresh_cache()
+        return jsonify({"success": True})
+    return jsonify({"error": "Archivo no encontrado"}), 404
 
 
 # ============== RUTAS DE CONOCIMIENTO EXTRA Y RÚBRICAS ==============
