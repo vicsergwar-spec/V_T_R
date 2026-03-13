@@ -97,6 +97,24 @@ const elements = {
     // Regenerar resumen
     regenerateSummaryBtn: document.getElementById('regenerateSummaryBtn'),
 
+    // Herramientas de estudio
+    flashcardsBtn: document.getElementById('flashcardsBtn'),
+    examBtn: document.getElementById('examBtn'),
+    extractActivityBtn: document.getElementById('extractActivityBtn'),
+    examModal: document.getElementById('examModal'),
+    examTopicInput: document.getElementById('examTopicInput'),
+    examCancelBtn: document.getElementById('examCancelBtn'),
+    examGenerateBtn: document.getElementById('examGenerateBtn'),
+    activityModal: document.getElementById('activityModal'),
+    activityNameInput: document.getElementById('activityNameInput'),
+    activityCancelBtn: document.getElementById('activityCancelBtn'),
+    activityExtractBtn: document.getElementById('activityExtractBtn'),
+    resultModal: document.getElementById('resultModal'),
+    resultModalTitle: document.getElementById('resultModalTitle'),
+    resultModalBody: document.getElementById('resultModalBody'),
+    resultDownloadBtn: document.getElementById('resultDownloadBtn'),
+    resultCloseBtn: document.getElementById('resultCloseBtn'),
+
     // Knowledge & Rubrica panels (class chat)
     knowledgeToggle: document.getElementById('knowledgeToggle'),
     knowledgePanel: document.getElementById('knowledgePanel'),
@@ -1092,6 +1110,20 @@ function initDetail() {
 
     // Botón regenerar resumen
     elements.regenerateSummaryBtn.addEventListener('click', regenerateSummary);
+
+    // Herramientas de estudio
+    elements.flashcardsBtn.addEventListener('click', generateFlashcards);
+    elements.examBtn.addEventListener('click', () => {
+        elements.examTopicInput.value = '';
+        elements.examModal.classList.add('active');
+        setTimeout(() => elements.examTopicInput.focus(), 50);
+    });
+    elements.extractActivityBtn.addEventListener('click', () => {
+        elements.activityNameInput.value = '';
+        elements.activityModal.classList.add('active');
+        setTimeout(() => elements.activityNameInput.focus(), 50);
+    });
+    initStudyModals();
 }
 
 function switchTab(tabName) {
@@ -2132,6 +2164,181 @@ function initModal() {
             modalCallback = null;
         }
     });
+}
+
+// ============================================
+// Herramientas de Estudio
+// ============================================
+
+let resultDownloadData = null; // {content, filename}
+
+function initStudyModals() {
+    // Exam modal
+    elements.examCancelBtn.addEventListener('click', () => {
+        elements.examModal.classList.remove('active');
+    });
+    elements.examGenerateBtn.addEventListener('click', generateExam);
+    elements.examTopicInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') generateExam();
+        if (e.key === 'Escape') elements.examModal.classList.remove('active');
+    });
+    elements.examModal.addEventListener('click', (e) => {
+        if (e.target === elements.examModal) elements.examModal.classList.remove('active');
+    });
+
+    // Activity modal
+    elements.activityCancelBtn.addEventListener('click', () => {
+        elements.activityModal.classList.remove('active');
+    });
+    elements.activityExtractBtn.addEventListener('click', extractActivity);
+    elements.activityNameInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') extractActivity();
+        if (e.key === 'Escape') elements.activityModal.classList.remove('active');
+    });
+    elements.activityModal.addEventListener('click', (e) => {
+        if (e.target === elements.activityModal) elements.activityModal.classList.remove('active');
+    });
+
+    // Result modal
+    elements.resultCloseBtn.addEventListener('click', () => {
+        elements.resultModal.classList.remove('active');
+    });
+    elements.resultDownloadBtn.addEventListener('click', () => {
+        if (!resultDownloadData) return;
+        const blob = new Blob([resultDownloadData.content], { type: 'text/markdown;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = resultDownloadData.filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast('success', 'Descargado', 'Archivo guardado');
+    });
+    elements.resultModal.addEventListener('click', (e) => {
+        if (e.target === elements.resultModal) elements.resultModal.classList.remove('active');
+    });
+}
+
+async function generateFlashcards() {
+    if (!state.currentClass) return;
+    const btn = elements.flashcardsBtn;
+    const origHTML = btn.innerHTML;
+    btn.disabled = true;
+    btn.textContent = 'Generando...';
+
+    const classId = state.currentClass.id;
+    const url = `/api/classes/${encodeURIComponent(classId).replace(/%2F/g, '/')}/flashcards`;
+
+    try {
+        const res = await fetch(url, { method: 'POST' });
+        if (!res.ok) {
+            const errData = await res.json();
+            showToast('error', 'Error', errData.error || 'No se pudieron generar flashcards');
+            return;
+        }
+        const blob = await res.blob();
+        const objUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = objUrl;
+        const cd = res.headers.get('Content-Disposition') || '';
+        const fnMatch = cd.match(/filename="([^"]+)"/);
+        a.download = fnMatch ? fnMatch[1] : `flashcards_${classId}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(objUrl);
+        showToast('success', 'Flashcards', 'Archivo Anki descargado');
+    } catch (err) {
+        showToast('error', 'Error', 'No se pudo conectar al servidor');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = origHTML;
+    }
+}
+
+async function generateExam() {
+    if (!state.currentClass) return;
+    const btn = elements.examGenerateBtn;
+    const topic = elements.examTopicInput.value.trim();
+    btn.disabled = true;
+    btn.textContent = 'Generando...';
+
+    const classId = state.currentClass.id;
+    const url = `/api/classes/${encodeURIComponent(classId).replace(/%2F/g, '/')}/exam`;
+
+    try {
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ topic })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            showToast('error', 'Error', data.error || 'No se pudo generar el examen');
+            return;
+        }
+
+        elements.examModal.classList.remove('active');
+        const className = state.currentClass.name || classId;
+        resultDownloadData = {
+            content: data.exam,
+            filename: `examen_${className}${topic ? '_' + topic.replace(/\s+/g, '_') : ''}.md`
+        };
+        elements.resultModalTitle.textContent = `Examen: ${className}${topic ? ' — ' + topic : ''}`;
+        elements.resultModalBody.innerHTML = parseMarkdown(data.exam);
+        elements.resultModal.classList.add('active');
+    } catch (err) {
+        showToast('error', 'Error', 'No se pudo conectar al servidor');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Generar Examen';
+    }
+}
+
+async function extractActivity() {
+    if (!state.currentClass) return;
+    const activityName = elements.activityNameInput.value.trim();
+    if (!activityName) {
+        showToast('warning', 'Atención', 'Ingresa el nombre de la actividad');
+        return;
+    }
+
+    const btn = elements.activityExtractBtn;
+    btn.disabled = true;
+    btn.textContent = 'Extrayendo...';
+
+    const classId = state.currentClass.id;
+    const url = `/api/classes/${encodeURIComponent(classId).replace(/%2F/g, '/')}/extract_activity`;
+
+    try {
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ activity_name: activityName })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            showToast('error', 'Error', data.error || 'No se pudo extraer la actividad');
+            return;
+        }
+
+        elements.activityModal.classList.remove('active');
+        const className = state.currentClass.name || classId;
+        resultDownloadData = {
+            content: data.activity,
+            filename: `actividad_${activityName.replace(/\s+/g, '_')}_${className}.md`
+        };
+        elements.resultModalTitle.textContent = `Actividad: ${activityName}`;
+        elements.resultModalBody.innerHTML = parseMarkdown(data.activity);
+        elements.resultModal.classList.add('active');
+    } catch (err) {
+        showToast('error', 'Error', 'No se pudo conectar al servidor');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Extraer';
+    }
 }
 
 function showConfirmModal(title, message, onConfirm) {

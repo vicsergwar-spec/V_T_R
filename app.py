@@ -1780,6 +1780,94 @@ def delete_context_image_route(class_id, filename):
     return jsonify({"error": "Archivo no encontrado"}), 404
 
 
+# ============== HERRAMIENTAS DE ESTUDIO ==============
+
+@app.route('/api/classes/<path:class_id>/flashcards', methods=['POST'])
+def generate_flashcards(class_id):
+    """Genera flashcards en formato Anki y devuelve el archivo."""
+    if not gemini_service:
+        return jsonify({"error": "Gemini API no está configurado"}), 500
+
+    transcription_text = file_manager.get_transcription_text(class_id)
+    if not transcription_text:
+        return jsonify({"error": "No se encontró la transcripción"}), 404
+
+    summary = file_manager.get_summary(class_id) or ""
+    slides = file_manager.get_slides_document(class_id) or file_manager.get_slides(class_id) or ""
+    class_name = class_id.split('/')[-1] if '/' in class_id else class_id
+
+    try:
+        result = gemini_service.generate_flashcards(transcription_text, summary, slides, class_name)
+        from flask import Response
+        return Response(
+            result,
+            mimetype='text/plain',
+            headers={
+                'Content-Disposition': f'attachment; filename="flashcards_{class_name}.txt"'
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error generando flashcards: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/classes/<path:class_id>/exam', methods=['POST'])
+def generate_exam(class_id):
+    """Genera un examen simulado y devuelve el markdown."""
+    if not gemini_service:
+        return jsonify({"error": "Gemini API no está configurado"}), 500
+
+    transcription_text = file_manager.get_transcription_text(class_id)
+    if not transcription_text:
+        return jsonify({"error": "No se encontró la transcripción"}), 404
+
+    summary = file_manager.get_summary(class_id) or ""
+    slides = file_manager.get_slides_document(class_id) or file_manager.get_slides(class_id) or ""
+    class_name = class_id.split('/')[-1] if '/' in class_id else class_id
+
+    data = request.get_json(silent=True) or {}
+    topic = data.get('topic', '').strip()
+
+    try:
+        result = gemini_service.generate_exam(transcription_text, summary, slides, class_name, topic)
+        return jsonify({"exam": result})
+    except Exception as e:
+        logger.error(f"Error generando examen: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/classes/<path:class_id>/extract_activity', methods=['POST'])
+def extract_activity(class_id):
+    """Extrae información de una actividad específica."""
+    if not gemini_service:
+        return jsonify({"error": "Gemini API no está configurado"}), 500
+
+    transcription_text = file_manager.get_transcription_text(class_id)
+    if not transcription_text:
+        return jsonify({"error": "No se encontró la transcripción"}), 404
+
+    data = request.get_json(silent=True) or {}
+    activity_name = data.get('activity_name', '').strip()
+    if not activity_name:
+        return jsonify({"error": "Debe proporcionar el nombre de la actividad"}), 400
+
+    summary = file_manager.get_summary(class_id) or ""
+    slides = file_manager.get_slides_document(class_id) or file_manager.get_slides(class_id) or ""
+    knowledge_text = file_manager.get_knowledge_text(class_id) or ""
+    rubricas_text = file_manager.get_rubricas_text(class_id) or ""
+    class_name = class_id.split('/')[-1] if '/' in class_id else class_id
+
+    try:
+        result = gemini_service.extract_activity(
+            transcription_text, summary, slides,
+            knowledge_text, rubricas_text, class_name, activity_name
+        )
+        return jsonify({"activity": result})
+    except Exception as e:
+        logger.error(f"Error extrayendo actividad: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 # ============== MANEJO DE ERRORES ==============
 
 @app.errorhandler(413)

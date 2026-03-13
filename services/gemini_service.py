@@ -1043,3 +1043,194 @@ INSTRUCCIONES:
             f"caché: {'sí' if cache_name else 'no'})"
         )
         return cache_name
+
+    # ──────────────────────────────────────────────────────────
+    # Herramientas de estudio
+    # ──────────────────────────────────────────────────────────
+
+    def generate_flashcards(self, transcription_text: str, summary: str, slides: str, class_name: str) -> str:
+        """Genera flashcards en formato Anki (Pregunta\\tRespuesta) a partir del contenido de la clase."""
+        context_parts = []
+        if transcription_text:
+            context_parts.append(f"TRANSCRIPCIÓN:\n{transcription_text[:60000]}")
+        if summary:
+            context_parts.append(f"RESUMEN:\n{summary[:5000]}")
+        if slides:
+            context_parts.append(f"SLIDES:\n{slides[:10000]}")
+        context = "\n\n".join(context_parts)
+
+        prompt = f"""Eres un experto en técnicas de estudio y memorización espaciada.
+A partir del siguiente contenido de la clase "{class_name.replace('_', ' ')}", genera entre 15 y 20 flashcards
+en formato Anki (importación por texto).
+
+CONTENIDO:
+{context}
+
+REGLAS ESTRICTAS:
+1. Cada línea es una flashcard: Pregunta[TAB]Respuesta
+2. Usa EXACTAMENTE un carácter tabulador (\\t) para separar pregunta de respuesta.
+3. Las preguntas deben cubrir los conceptos más importantes de la clase.
+4. Las respuestas deben ser concisas pero completas (1-3 oraciones).
+5. Incluye preguntas de definición, comparación, aplicación y relación de conceptos.
+6. NO uses comillas alrededor de las preguntas o respuestas.
+7. NO numeres las flashcards.
+8. NO incluyas encabezados ni texto adicional, SOLO las líneas pregunta\\trespuesta.
+
+Responde SOLO con las líneas de flashcards, sin explicaciones."""
+
+        try:
+            gemini_rate_limiter.acquire()
+            response = self.model.generate_content(prompt)
+            result = response.text.strip()
+            logger.info(f"Flashcards generadas para: {class_name}")
+            return result
+        except Exception as e:
+            logger.error(f"Error generando flashcards: {e}")
+            raise
+
+    def generate_exam(self, transcription_text: str, summary: str, slides: str, class_name: str, topic: str = "") -> str:
+        """Genera un examen simulado con preguntas de opción múltiple y desarrollo."""
+        context_parts = []
+        if transcription_text:
+            context_parts.append(f"TRANSCRIPCIÓN:\n{transcription_text[:60000]}")
+        if summary:
+            context_parts.append(f"RESUMEN:\n{summary[:5000]}")
+        if slides:
+            context_parts.append(f"SLIDES:\n{slides[:10000]}")
+        context = "\n\n".join(context_parts)
+
+        topic_instruction = f'Enfócate ESPECÍFICAMENTE en el tema: "{topic}".' if topic else "Cubre los temas más importantes de la clase de forma general."
+
+        prompt = f"""Eres un profesor universitario experto. Genera un examen simulado basado en el contenido
+de la clase "{class_name.replace('_', ' ')}".
+
+{topic_instruction}
+
+CONTENIDO DE LA CLASE:
+{context}
+
+GENERA EL EXAMEN EN FORMATO MARKDOWN CON ESTA ESTRUCTURA EXACTA:
+
+# Examen: {class_name.replace('_', ' ')}{(' — ' + topic) if topic else ''}
+
+## Instrucciones
+- Las preguntas 1-10 son de opción múltiple. Selecciona la respuesta correcta.
+- Las preguntas 11-12 son de desarrollo. Responde de forma completa y argumentada.
+
+---
+
+## Sección I: Opción Múltiple
+
+**1.** [Pregunta]
+
+a) [Opción A]
+b) [Opción B]
+c) [Opción C]
+d) [Opción D]
+
+**Respuesta correcta:** [letra]) [texto de la respuesta]
+
+(Repite para las 10 preguntas)
+
+---
+
+## Sección II: Preguntas de Desarrollo
+
+**11.** [Pregunta de desarrollo que requiera análisis o síntesis]
+
+**Guía de respuesta:** [Puntos clave que debe incluir una buena respuesta, en viñetas]
+
+**12.** [Pregunta de desarrollo que requiera aplicación práctica]
+
+**Guía de respuesta:** [Puntos clave que debe incluir una buena respuesta, en viñetas]
+
+INSTRUCCIONES ADICIONALES:
+- Basa TODAS las preguntas en el contenido real de la clase.
+- Las opciones incorrectas deben ser plausibles (distractores buenos).
+- Varía la dificultad: fácil, media y difícil.
+- Las preguntas de desarrollo deben requerir pensamiento crítico."""
+
+        try:
+            gemini_rate_limiter.acquire()
+            response = self.model.generate_content(prompt)
+            result = response.text.strip()
+            logger.info(f"Examen generado para: {class_name} (tema: {topic or 'general'})")
+            return result
+        except Exception as e:
+            logger.error(f"Error generando examen: {e}")
+            raise
+
+    def extract_activity(
+        self, transcription_text: str, summary: str, slides: str,
+        knowledge_text: str, rubricas_text: str, class_name: str, activity_name: str
+    ) -> str:
+        """Extrae toda la información relacionada con una actividad específica."""
+        context_parts = []
+        if transcription_text:
+            context_parts.append(f"TRANSCRIPCIÓN DE LA CLASE:\n{transcription_text[:60000]}")
+        if summary:
+            context_parts.append(f"RESUMEN:\n{summary[:5000]}")
+        if slides:
+            context_parts.append(f"SLIDES:\n{slides[:10000]}")
+        if knowledge_text:
+            context_parts.append(f"ARCHIVOS DE CONOCIMIENTO EXTRA:\n{knowledge_text[:10000]}")
+        if rubricas_text:
+            context_parts.append(f"RÚBRICAS:\n{rubricas_text[:10000]}")
+        context = "\n\n".join(context_parts)
+
+        prompt = f"""Eres un asistente académico experto. Busca TODA la información relacionada con la actividad
+"{activity_name}" en el siguiente contenido de la clase "{class_name.replace('_', ' ')}".
+
+CONTENIDO DISPONIBLE:
+{context}
+
+Tu tarea es extraer y estructurar TODA la información que encuentres sobre la actividad "{activity_name}"
+en un documento Markdown completo y organizado.
+
+GENERA EL DOCUMENTO CON ESTA ESTRUCTURA EXACTA:
+
+# {activity_name}
+
+**Clase:** {class_name.replace('_', ' ')}
+**Extraído el:** (fecha actual)
+
+## Descripción
+(Describe de qué trata la actividad según lo mencionado en clase)
+
+## Objetivos
+(Lista los objetivos o propósitos de la actividad)
+
+## Instrucciones
+(Detalla paso a paso qué debe hacer el estudiante. Si hay instrucciones específicas del profesor, inclúyelas textualmente)
+
+## Criterios de evaluación
+(Si hay rúbrica o criterios de calificación, estructúralos aquí. Si no hay información, indicar "No se mencionaron criterios específicos")
+
+## Fechas mencionadas
+(Fechas de entrega, presentación, etc. Si no hay, indicar "No se mencionaron fechas específicas")
+
+## Material necesario
+(Herramientas, software, libros, etc. que se necesitan)
+
+## Notas del profesor
+(Comentarios adicionales, consejos, advertencias o aclaraciones que haya hecho el profesor sobre esta actividad)
+
+## Fuentes de información
+(Indica de dónde se extrajo cada pieza de información: transcripción, slides, rúbrica, etc.)
+
+INSTRUCCIONES:
+- Extrae SOLO información que realmente aparezca en el contenido proporcionado.
+- Si una sección no tiene información, escribe "No se encontró información sobre este punto en el material disponible."
+- Sé exhaustivo: incluye TODO lo que el profesor haya dicho sobre esta actividad.
+- Conserva citas textuales relevantes del profesor entre comillas.
+- El documento debe ser útil para que el estudiante complete la actividad sin necesidad de revisar la grabación."""
+
+        try:
+            gemini_rate_limiter.acquire()
+            response = self.model.generate_content(prompt)
+            result = response.text.strip()
+            logger.info(f"Actividad extraída: '{activity_name}' de {class_name}")
+            return result
+        except Exception as e:
+            logger.error(f"Error extrayendo actividad: {e}")
+            raise
