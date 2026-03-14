@@ -3,6 +3,11 @@
  * Lógica del Frontend
  */
 
+// Desactivar auto-inicio de Mermaid para evitar errores visuales al cargar la página
+if (typeof mermaid !== 'undefined') {
+    mermaid.initialize({ startOnLoad: false });
+}
+
 // ============================================
 // Estado de la aplicación
 // ============================================
@@ -1806,9 +1811,13 @@ async function sendChatMessage() {
 function _buildChatMessageElement(role, content) {
     const messageDiv = document.createElement('div');
     messageDiv.className = `chat-message ${role}`;
+    messageDiv.style.overflow = 'hidden';
 
     if (role === 'assistant') {
-        messageDiv.innerHTML = parseMarkdown(content);
+        const innerDiv = document.createElement('div');
+        innerDiv.style.overflow = 'hidden';
+        innerDiv.innerHTML = parseMarkdown(content);
+        messageDiv.appendChild(innerDiv);
         // Wrap in container with copy button
         const wrapper = document.createElement('div');
         wrapper.className = 'chat-msg-wrapper';
@@ -1983,8 +1992,12 @@ async function loadFolderChatSession(folderPath) {
                 const role = msg.role === 'model' ? 'assistant' : msg.role;
                 const messageDiv = document.createElement('div');
                 messageDiv.className = `chat-message ${role}`;
+                messageDiv.style.overflow = 'hidden';
                 if (role === 'assistant') {
-                    messageDiv.innerHTML = parseMarkdown(msg.content);
+                    const innerDiv = document.createElement('div');
+                    innerDiv.style.overflow = 'hidden';
+                    innerDiv.innerHTML = parseMarkdown(msg.content);
+                    messageDiv.appendChild(innerDiv);
                     const wrapper = document.createElement('div');
                     wrapper.className = 'chat-msg-wrapper';
                     const copyBtn = document.createElement('button');
@@ -2069,9 +2082,13 @@ async function sendFolderChatMessage() {
 function addFolderChatMessage(role, content) {
     const messageDiv = document.createElement('div');
     messageDiv.className = `chat-message ${role}`;
+    messageDiv.style.overflow = 'hidden';
 
     if (role === 'assistant') {
-        messageDiv.innerHTML = parseMarkdown(content);
+        const innerDiv = document.createElement('div');
+        innerDiv.style.overflow = 'hidden';
+        innerDiv.innerHTML = parseMarkdown(content);
+        messageDiv.appendChild(innerDiv);
         const wrapper = document.createElement('div');
         wrapper.className = 'chat-msg-wrapper';
         const copyBtn = document.createElement('button');
@@ -3091,8 +3108,13 @@ function parseMarkdown(text) {
 }
 
 function processInline(text) {
-    // Escapar HTML primero para prevenir inyección
-    text = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    if (!text) return '';
+    // Escapar HTML primero para prevenir inyección y evitar que < > & rompan la estructura DOM
+    text = String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    // Aplicar formato markdown DESPUÉS del escape
     return text
         .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
         .replace(/\*(.*?)\*/g, '<em>$1</em>')
