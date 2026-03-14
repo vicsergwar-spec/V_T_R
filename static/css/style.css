@@ -1112,9 +1112,23 @@ body {
     font-weight: 400;
 }
 
+/* Folder chat section: layout flex para paneles + chat */
+#folder-chat-section.active {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 100px);
+}
+
+#folder-chat-section .chat-panels {
+    flex-shrink: 0;
+}
+
 /* Chat container con altura completa */
 .folder-chat-main {
-    height: calc(100vh - 220px);
+    flex: 1;
+    min-height: 0;
+    height: auto;
+    max-height: none;
 }
 
 .class-card {
@@ -1348,6 +1362,23 @@ body {
 .tab-content.active {
     display: block;
     animation: fadeIn 0.3s ease;
+}
+
+/* Tab chat: layout flex para que panels + chat-container compartan espacio */
+#tab-chat.active {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 200px);
+}
+
+#tab-chat.active .chat-panels {
+    flex-shrink: 0;
+}
+
+#tab-chat.active .chat-container {
+    flex: 1;
+    height: auto;
+    min-height: 0;
 }
 
 /* Resumen (Markdown) */
@@ -1840,16 +1871,27 @@ body {
     display: flex;
     flex-direction: column;
     height: 600px;
+    min-height: 200px;
     background: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
-    overflow: hidden;
+    overflow: visible;
+}
+
+/* Redondear esquinas del primer y último hijo para mantener bordes redondeados */
+.chat-container > :first-child {
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+.chat-container > :last-child {
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
 }
 
 .chat-messages {
     flex: 1;
+    min-height: 0;
     padding: 24px;
     overflow-y: auto;
+    overflow-x: hidden;
     display: flex;
     flex-direction: column;
     gap: 16px;
@@ -1920,6 +1962,7 @@ body {
 }
 
 .chat-input-container {
+    flex-shrink: 0;
     padding: 16px 24px;
     border-top: 1px solid var(--border-color);
     background: var(--bg-secondary);

@@ -38,6 +38,7 @@ class GeminiService:
         self._model_name = model_name  # guardado para crear instancias por sesión
         self.model = genai.GenerativeModel(model_name)
         self.chat_sessions = {}  # Almacena sesiones de chat por clase
+        self._cached_session_ids: set = set()
         logger.info(f"Servicio Gemini inicializado con modelo: {model_name}")
 
     # ── TOON conversion helpers ───────────────────────────────────────
@@ -566,7 +567,7 @@ Responde SOLO con el documento Markdown (incluyendo el frontmatter YAML), sin ex
                 cache = genai.caching.CachedContent.get(existing_cache_name)
                 model = genai.GenerativeModel.from_cached_content(cached_content=cache)
                 logger.info(f"Caché de Gemini reutilizado: {existing_cache_name}")
-                return model, existing_cache_name
+                return model, existing_cache_name, True
             except Exception:
                 logger.info("Caché anterior expirado o inválido, creando uno nuevo")
 
@@ -579,7 +580,7 @@ Responde SOLO con el documento Markdown (incluyendo el frontmatter YAML), sin ex
             )
             model = genai.GenerativeModel.from_cached_content(cached_content=cache)
             logger.info(f"Caché de Gemini creado: {cache.name}")
-            return model, cache.name
+            return model, cache.name, True
         except Exception as e:
             # Fallback: transcripción muy corta (< mínimo tokens), API sin soporte, etc.
             logger.warning(
@@ -590,7 +591,7 @@ Responde SOLO con el documento Markdown (incluyendo el frontmatter YAML), sin ex
                 self._model_name,
                 system_instruction=system_instruction,
             )
-            return model, None
+            return model, None, False
 
     def start_chat_session(
         self,
@@ -684,7 +685,12 @@ INSTRUCCIONES:
 5. Puedes ayudar a resumir secciones específicas, explicar conceptos, o preparar para exámenes.
 6. Usa un tono amigable pero académico.{_anti_hallucination}"""
 
-        session_model, cache_name = self._build_cached_model(system_instruction, cached_content_name)
+        session_model, cache_name, is_cached = self._build_cached_model(system_instruction, cached_content_name)
+
+        if is_cached:
+            self._cached_session_ids.add(class_id)
+        else:
+            self._cached_session_ids.discard(class_id)
 
         # Historial previo en TOON para reducir tokens de contexto
         sdk_history = []
@@ -728,6 +734,7 @@ INSTRUCCIONES:
         # Limpiar sesión en memoria
         if session_key in self.chat_sessions:
             del self.chat_sessions[session_key]
+        self._cached_session_ids.discard(session_key)
 
         is_folder = session_key.startswith("__folder__")
 
@@ -839,7 +846,7 @@ INSTRUCCIONES:
         )
 
         send_kwargs = {}
-        if use_grounding:
+        if use_grounding and class_id not in self._cached_session_ids:
             send_kwargs["tools"] = [_GOOGLE_SEARCH_TOOL]
 
         context_images = session.get("context_images", [])
@@ -907,6 +914,7 @@ INSTRUCCIONES:
         """
         if class_id in self.chat_sessions:
             del self.chat_sessions[class_id]
+            self._cached_session_ids.discard(class_id)
             logger.info(f"Sesión de chat eliminada para clase: {class_id}")
             return True
         return False
@@ -1020,7 +1028,12 @@ INSTRUCCIONES:
 
         system_instruction = "\n".join(parts)
 
-        session_model, cache_name = self._build_cached_model(system_instruction, cached_content_name)
+        session_model, cache_name, is_cached = self._build_cached_model(system_instruction, cached_content_name)
+
+        if is_cached:
+            self._cached_session_ids.add(folder_id)
+        else:
+            self._cached_session_ids.discard(folder_id)
 
         sdk_history = []
         for msg in (history or []):
