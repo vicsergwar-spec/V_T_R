@@ -132,6 +132,7 @@ if config.GEMINI_API_KEY:
             api_key=config.GEMINI_API_KEY,
             model_name=config.GEMINI_MODEL
         )
+        logger.info("Servicio Gemini listo")
     except Exception as e:
         logger.error(f"Error inicializando Gemini: {e}")
 

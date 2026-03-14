@@ -34,12 +34,21 @@ class GeminiService:
         if not api_key:
             raise ValueError("Se requiere una API key de Gemini")
 
+        self._api_key = api_key
         genai.configure(api_key=api_key)
         self._model_name = model_name  # guardado para crear instancias por sesión
         self.model = genai.GenerativeModel(model_name)
         self.chat_sessions = {}  # Almacena sesiones de chat por clase
         self._cached_session_ids: set = set()
         logger.info(f"Servicio Gemini inicializado con modelo: {model_name}")
+
+    def validate_api_key(self) -> bool:
+        """Valida la API key intentando listar modelos disponibles."""
+        try:
+            list(genai.list_models())
+            return True
+        except Exception:
+            return False
 
     # ── TOON conversion helpers ───────────────────────────────────────
 
@@ -587,6 +596,8 @@ Responde SOLO con el documento Markdown (incluyendo el frontmatter YAML), sin ex
                 f"Context caching no disponible ({type(e).__name__}), "
                 "usando system_instruction estándar"
             )
+            # Re-configurar API key antes del fallback para garantizar propagación
+            genai.configure(api_key=self._api_key)
             model = genai.GenerativeModel(
                 self._model_name,
                 system_instruction=system_instruction,
@@ -818,6 +829,12 @@ INSTRUCCIONES:
             return self._send_chat_message(class_id, session, user_message, use_grounding=use_grounding, inline_images=inline_images)
 
         except Exception as e:
+            # Propagar errores de API key inválida directamente al frontend
+            err_str = str(e).lower()
+            if "api_key_invalid" in err_str or "api key not valid" in err_str or "403" in err_str:
+                logger.error(f"API key inválida: {e}")
+                raise ValueError(f"API key inválida: {e}") from e
+
             # Si es error de CachedContent y tenemos file_manager, auto-recovery
             if file_manager and self._is_cache_not_found_error(e):
                 logger.warning(
